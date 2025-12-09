@@ -94,10 +94,9 @@ impl Pipeline for GitLabProvider {
 
             let mut pipelines: Vec<GitLabPipeline> = response.json().await?;
 
-            // Filter out incomplete pipelines
             pipelines.retain(|p| {
-                let unfinished_statuses = ["running", "pending", "created"];
-                !unfinished_statuses.contains(&p.status.as_str())
+                let irrelevant_statuses = ["canceled", "created", "pending", "running", "skipped"];
+                !irrelevant_statuses.contains(&p.status.as_str())
             });
 
             let fetched_count = pipelines.len();
@@ -110,7 +109,6 @@ impl Pipeline for GitLabProvider {
                 all_pipelines.len()
             );
 
-            // Stop if we have enough or if the last page returned fewer than per_page items
             if all_pipelines.len() >= limit {
                 break;
             }
@@ -142,7 +140,7 @@ impl Pipeline for GitLabProvider {
             successful_pipelines,
             failed_pipelines,
             pipeline_success_rate,
-            average_pipeline_duration_seconds: average_pipeline_duration,
+            average_pipeline_duration,
         }
     }
 }
