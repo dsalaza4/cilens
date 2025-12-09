@@ -1,0 +1,28 @@
+[package]
+name = "cilens"
+version = "0.1.0"
+edition = "2021"
+authors = ["Daniel Salazar <podany270895@gmail.com>"]
+description = "A CLI tool for collecting and analyzing CI/CD insights"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+env_logger = "0.11"
+log = "0.4"
+reqwest = { version = "0.12", features = [
+  "json",
+  "rustls-tls",
+], default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tokio = { version = "1.40", features = ["full"] }
+url = "2.5"
+urlencoding = "2.1"
+
+[dev-dependencies]
+mockito = "1.5"
