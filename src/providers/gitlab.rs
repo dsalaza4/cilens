@@ -66,12 +66,13 @@ impl Pipeline for GitLabProvider {
         let url = self.build_url(branch);
         info!("Fetching pipelines from: {}", url);
 
-        let response = self
-            .client
-            .get(&url)
-            .header("PRIVATE-TOKEN", &self.token)
-            .send()
-            .await?;
+        let mut request = self.client.get(&url);
+
+        if !self.token.is_empty() {
+            request = request.header("PRIVATE-TOKEN", &self.token);
+        }
+
+        let response = request.send().await?;
 
         if !response.status().is_success() {
             let status = response.status();

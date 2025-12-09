@@ -26,9 +26,9 @@ pub struct Cli {
 enum Commands {
     /// Collect insights from GitLab
     Gitlab {
-        /// GitLab API token (can also be set via GITLAB_TOKEN env var)
+        /// GitLab API token (optional, required for private projects)
         #[arg(short, long, env = "GITLAB_TOKEN")]
-        token: String,
+        token: Option<String>,
 
         /// GitLab instance URL
         #[arg(short, long, default_value = "https://gitlab.com")]
@@ -60,7 +60,8 @@ impl Cli {
             } => {
                 info!("Collecting GitLab insights for project: {}", project);
 
-                let provider = GitLabProvider::new(url.clone(), project.clone(), token.clone())?;
+                let token_value = token.clone().unwrap_or_default();
+                let provider = GitLabProvider::new(url.clone(), project.clone(), token_value)?;
                 let insights = provider
                     .collect_insights(project, *limit, branch.as_deref())
                     .await?;
