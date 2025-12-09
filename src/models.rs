@@ -17,5 +17,4 @@ pub struct PipelineSummary {
     pub failed_pipelines: usize,
     pub pipeline_success_rate: f64,
     pub average_pipeline_duration_seconds: f64,
-    pub total_jobs_analyzed: usize,
 }

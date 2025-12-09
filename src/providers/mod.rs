@@ -12,11 +12,7 @@ pub trait Pipeline {
 
     async fn fetch(&self, limit: usize, branch: Option<&str>) -> Result<Vec<Self::PipelineData>>;
 
-    fn calculate_summary(
-        &self,
-        pipelines: &[Self::PipelineData],
-        total_jobs: usize,
-    ) -> PipelineSummary;
+    fn calculate_summary(&self, pipelines: &[Self::PipelineData]) -> PipelineSummary;
 }
 
 #[async_trait]

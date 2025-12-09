@@ -61,7 +61,6 @@ cilens gitlab --url "https://gitlab.example.com" --project "your/project"
     "failed_pipelines": 2,
     "pipeline_success_rate": 90.0,
     "average_pipeline_duration_seconds": 600.5,
-    "total_jobs_analyzed": 120
   }
 }
 ```

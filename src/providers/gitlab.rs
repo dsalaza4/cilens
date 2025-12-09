@@ -123,11 +123,7 @@ impl Pipeline for GitLabProvider {
         Ok(all_pipelines)
     }
 
-    fn calculate_summary(
-        &self,
-        pipelines: &[GitLabPipeline],
-        total_jobs: usize,
-    ) -> PipelineSummary {
+    fn calculate_summary(&self, pipelines: &[GitLabPipeline]) -> PipelineSummary {
         let total_pipelines = pipelines.len();
         let successful_pipelines = pipelines.iter().filter(|p| p.status == "success").count();
         let failed_pipelines = pipelines.iter().filter(|p| p.status == "failed").count();
@@ -147,7 +143,6 @@ impl Pipeline for GitLabProvider {
             failed_pipelines,
             pipeline_success_rate,
             average_pipeline_duration_seconds: average_pipeline_duration,
-            total_jobs_analyzed: total_jobs,
         }
     }
 }
@@ -168,7 +163,7 @@ impl Provider for GitLabProvider {
             warn!("No pipelines found for project: {}", project);
         }
 
-        let pipeline_summary = self.calculate_summary(&pipelines, 0);
+        let pipeline_summary = self.calculate_summary(&pipelines);
 
         Ok(CIInsights {
             provider: "GitLab".to_string(),
