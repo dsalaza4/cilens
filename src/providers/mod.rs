@@ -8,7 +8,7 @@ use async_trait::async_trait;
 pub trait Pipeline {
     type PipelineData;
 
-    fn build_url(&self, branch: Option<&str>) -> String;
+    fn build_url(&self, branch: Option<&str>, page: u32, per_page: usize) -> String;
 
     async fn fetch(&self, limit: usize, branch: Option<&str>) -> Result<Vec<Self::PipelineData>>;
 

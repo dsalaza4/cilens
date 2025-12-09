@@ -47,11 +47,15 @@ impl GitLabProvider {
 impl Pipeline for GitLabProvider {
     type PipelineData = GitLabPipeline;
 
-    fn build_url(&self, branch: Option<&str>) -> String {
-        let params = match branch {
-            Some(branch_name) => vec![("per_page", "100"), ("ref", branch_name)],
-            None => vec![("per_page", "100")],
-        };
+    fn build_url(&self, branch: Option<&str>, page: u32, per_page: usize) -> String {
+        let mut params = vec![
+            ("per_page", per_page.to_string()),
+            ("page", page.to_string()),
+        ];
+
+        if let Some(branch_name) = branch {
+            params.push(("ref", branch_name.to_string()));
+        }
 
         let query_string = params
             .iter()
@@ -63,35 +67,60 @@ impl Pipeline for GitLabProvider {
     }
 
     async fn fetch(&self, limit: usize, branch: Option<&str>) -> Result<Vec<GitLabPipeline>> {
-        let url = self.build_url(branch);
-        info!("Fetching pipelines from: {}", url);
+        let mut all_pipelines = Vec::new();
+        let mut page = 1;
+        let per_page = 100;
 
-        let mut request = self.client.get(&url);
+        info!("Fetching up to {} pipelines...", limit);
 
-        if !self.token.is_empty() {
-            request = request.header("PRIVATE-TOKEN", &self.token);
+        loop {
+            let url = self.build_url(branch, page, per_page);
+
+            let mut request = self.client.get(&url);
+            if !self.token.is_empty() {
+                request = request.header("PRIVATE-TOKEN", &self.token);
+            }
+
+            let response = request.send().await?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err(CILensError::ApiError(format!(
+                    "Failed to fetch pipelines: {} - {}",
+                    status, body
+                )));
+            }
+
+            let mut pipelines: Vec<GitLabPipeline> = response.json().await?;
+
+            // Filter out incomplete pipelines
+            pipelines.retain(|p| {
+                let unfinished_statuses = ["running", "pending", "created"];
+                !unfinished_statuses.contains(&p.status.as_str())
+            });
+
+            let fetched_count = pipelines.len();
+            all_pipelines.extend(pipelines);
+
+            info!(
+                "Page {}: fetched {} completed pipelines (total: {})",
+                page,
+                fetched_count,
+                all_pipelines.len()
+            );
+
+            // Stop if we have enough or if the last page returned fewer than per_page items
+            if all_pipelines.len() >= limit {
+                break;
+            }
+
+            page += 1;
         }
 
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(CILensError::ApiError(format!(
-                "Failed to fetch pipelines: {} - {}",
-                status, body
-            )));
-        }
-
-        let mut pipelines: Vec<GitLabPipeline> = response.json().await?;
-
-        pipelines
-            .retain(|p| p.status != "running" && p.status != "pending" && p.status != "created");
-
-        pipelines.truncate(limit);
-
-        info!("Fetched {} completed pipelines", pipelines.len());
-        Ok(pipelines)
+        all_pipelines.truncate(limit);
+        info!("Returning {} completed pipelines", all_pipelines.len());
+        Ok(all_pipelines)
     }
 
     fn calculate_summary(
