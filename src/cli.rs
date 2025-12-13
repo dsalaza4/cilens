@@ -4,7 +4,6 @@ use log::info;
 use std::path::PathBuf;
 
 use crate::providers::gitlab::GitLabProvider;
-use crate::providers::Provider;
 
 #[derive(Parser)]
 #[command(name = "cilens")]

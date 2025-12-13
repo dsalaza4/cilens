@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use chrono::Utc;
 use log::{info, warn};
 use reqwest::Client;
@@ -6,7 +5,6 @@ use serde::Deserialize;
 
 use crate::error::{CILensError, Result};
 use crate::models::{CIInsights, PipelineSummary};
-use crate::providers::{Pipeline, Provider};
 
 #[derive(Debug, Deserialize)]
 pub struct GitLabPipeline {
@@ -41,10 +39,7 @@ impl GitLabProvider {
     }
 }
 
-#[async_trait]
-impl Pipeline for GitLabProvider {
-    type PipelineData = GitLabPipeline;
-
+impl GitLabProvider {
     fn build_url(&self, branch: Option<&str>, page: u32, per_page: usize) -> String {
         let mut params = vec![
             ("per_page", per_page.to_string()),
@@ -143,9 +138,8 @@ impl Pipeline for GitLabProvider {
     }
 }
 
-#[async_trait]
-impl Provider for GitLabProvider {
-    async fn collect_insights(
+impl GitLabProvider {
+    pub async fn collect_insights(
         &self,
         project: &str,
         limit: usize,
