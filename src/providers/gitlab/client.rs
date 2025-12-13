@@ -20,7 +20,7 @@ pub struct GitLabPipelineDto {
 
 impl GitLabPipelineDto {
     pub fn is_completed(&self) -> bool {
-        matches!(self.status.as_str(), "success" | "failed" | "manual")
+        matches!(self.status.as_str(), "success" | "failed")
     }
 }
 
@@ -48,7 +48,9 @@ impl GitLabClient {
             .join(&format!("projects/{}/", urlencoding::encode(project_id)))
             .map_err(|e| CILensError::Config(format!("Invalid project URL: {e}")))
     }
+}
 
+impl GitLabClient {
     pub async fn fetch_pipeline_ids_page(
         &self,
         project_id: &str,
