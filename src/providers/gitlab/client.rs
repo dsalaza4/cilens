@@ -12,15 +12,26 @@ pub struct GitLabClient {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct GitLabPipelineDto {
+pub struct GitLabPipelineListDto {
     pub id: u32,
     pub status: String,
-    pub duration: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GitLabPipelineDto {
+    pub status: String,
+    pub duration: Option<usize>,
+}
+
+impl GitLabPipelineListDto {
+    pub fn is_valid(&self) -> bool {
+        matches!(self.status.as_str(), "success" | "failed")
+    }
 }
 
 impl GitLabPipelineDto {
-    pub fn is_completed(&self) -> bool {
-        matches!(self.status.as_str(), "success" | "failed")
+    pub fn is_valid(&self) -> bool {
+        self.duration.is_some()
     }
 }
 
@@ -51,13 +62,13 @@ impl GitLabClient {
 }
 
 impl GitLabClient {
-    pub async fn fetch_pipeline_ids_page(
+    pub async fn fetch_pipeline_list_page(
         &self,
         project_id: &str,
         page: u32,
         per_page: u32,
         branch: Option<&str>,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<GitLabPipelineListDto>> {
         let url = self
             .api_url_project(project_id)?
             .join("pipelines")
@@ -78,23 +89,15 @@ impl GitLabClient {
 
         let response = request.send().await?.error_for_status()?;
 
-        let pipelines = response.json::<Vec<GitLabPipelineDto>>().await?;
+        let pipelines = response.json::<Vec<GitLabPipelineListDto>>().await?;
 
-        Ok(pipelines
-            .into_iter()
-            .filter(GitLabPipelineDto::is_completed)
-            .map(|p| p.id.to_string())
-            .collect())
+        Ok(pipelines)
     }
 
-    pub async fn fetch_pipeline(
-        &self,
-        project_id: &str,
-        pipeline_id: &str,
-    ) -> Result<GitLabPipelineDto> {
+    pub async fn fetch_pipeline(&self, project_id: &str, id: u32) -> Result<GitLabPipelineDto> {
         let url = self
             .api_url_project(project_id)?
-            .join(&format!("pipelines/{pipeline_id}"))
+            .join(&format!("pipelines/{id}"))
             .map_err(|e| CILensError::Config(format!("Invalid pipeline URL: {e}")))?;
 
         let mut request = self.client.get(url);

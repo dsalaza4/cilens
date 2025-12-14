@@ -6,14 +6,14 @@ use serde::Deserialize;
 use crate::auth::Token;
 use crate::error::Result;
 use crate::insights::{CIInsights, PipelineSummary};
-use crate::providers::gitlab::client::GitLabClient;
+use crate::providers::gitlab::client::{GitLabClient, GitLabPipelineDto, GitLabPipelineListDto};
 
 const CONCURRENCY: usize = 10;
 
 #[derive(Debug, Deserialize)]
 pub struct GitLabPipeline {
     status: String,
-    duration: Option<f64>,
+    duration: usize,
 }
 
 pub struct GitLabProvider {
@@ -28,7 +28,7 @@ impl GitLabProvider {
         Ok(Self { client, project_id })
     }
 
-    async fn fetch_pipelines(
+    pub async fn fetch_pipelines(
         &self,
         limit: usize,
         branch: Option<&str>,
@@ -39,46 +39,50 @@ impl GitLabProvider {
 
         info!("Fetching up to {limit} pipelines...");
 
-        loop {
-            let pipeline_ids = self
+        while all_pipelines.len() < limit {
+            // Fetch a page of pipeline list and pre-filter invalid ones
+            let pipelines_list = self
                 .client
-                .fetch_pipeline_ids_page(&self.project_id, page, per_page, branch)
-                .await?;
+                .fetch_pipeline_list_page(&self.project_id, page, per_page, branch)
+                .await?
+                .into_iter()
+                .filter(GitLabPipelineListDto::is_valid)
+                .collect::<Vec<_>>();
 
-            if pipeline_ids.is_empty() {
+            if pipelines_list.is_empty() {
                 info!("No more pipelines returned by API, stopping");
                 break;
             }
 
-            let pipelines = stream::iter(pipeline_ids)
-                .map(|id| async move { self.client.fetch_pipeline(&self.project_id, &id).await })
+            // Fetch full pipeline data concurrently
+            let pipelines: Vec<GitLabPipeline> = stream::iter(pipelines_list)
+                .map(|p| async move { self.client.fetch_pipeline(&self.project_id, p.id).await })
                 .buffer_unordered(CONCURRENCY)
                 .try_collect::<Vec<_>>()
-                .await?;
+                .await?
+                .into_iter()
+                .filter(GitLabPipelineDto::is_valid)
+                .take(limit.saturating_sub(all_pipelines.len())) // enforce remaining limit
+                .map(|p| GitLabPipeline {
+                    status: p.status,
+                    duration: p
+                        .duration
+                        .expect("Pipeline duration should be Some, but found None"),
+                })
+                .collect();
 
-            let remaining = limit.saturating_sub(all_pipelines.len());
-            all_pipelines.extend(pipelines.into_iter().take(remaining));
+            let fetched_count = pipelines.len();
+            all_pipelines.extend(pipelines);
 
             info!(
-                "Page {page}: fetched {} pipelines (total: {})",
-                all_pipelines.len().min(per_page as usize),
+                "Page {page}: fetched {fetched_count} pipelines (total: {})",
                 all_pipelines.len()
             );
-
-            if all_pipelines.len() >= limit {
-                break;
-            }
 
             page += 1;
         }
 
-        Ok(all_pipelines
-            .into_iter()
-            .map(|p| GitLabPipeline {
-                status: p.status,
-                duration: p.duration,
-            })
-            .collect())
+        Ok(all_pipelines)
     }
 
     fn calculate_summary(pipelines: &[GitLabPipeline]) -> PipelineSummary {
@@ -94,7 +98,7 @@ impl GitLabProvider {
         };
 
         #[allow(clippy::cast_precision_loss)]
-        let average_pipeline_duration = pipelines.iter().filter_map(|p| p.duration).sum::<f64>()
+        let average_pipeline_duration = pipelines.iter().map(|p| p.duration as f64).sum::<f64>()
             / total_pipelines.max(1) as f64;
 
         PipelineSummary {
