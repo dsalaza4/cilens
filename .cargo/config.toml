@@ -1,2 +1,5 @@
 [alias]
 lint = "clippy --all-targets --all-features -- -D warnings -D clippy::pedantic"
+
+[term]
+color = "always"
