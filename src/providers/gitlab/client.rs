@@ -12,20 +12,25 @@ pub struct GitLabClient {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct GitLabPipelineListDto {
     pub id: u32,
     pub status: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct GitLabPipelineDto {
     pub status: String,
     pub duration: Option<usize>,
 }
 
+// Allowed statuses for list DTO
+const ALLOWED_STATUSES: [&str; 2] = ["success", "failed"];
+
 impl GitLabPipelineListDto {
     pub fn is_valid(&self) -> bool {
-        matches!(self.status.as_str(), "success" | "failed")
+        ALLOWED_STATUSES.contains(&self.status.as_str())
     }
 }
 
@@ -54,14 +59,30 @@ impl GitLabClient {
         })
     }
 
-    pub fn api_url_project(&self, project_id: &str) -> Result<Url> {
+    /// Helper to build authenticated requests
+    fn auth_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(token) = &self.token {
+            request.bearer_auth(token.as_str())
+        } else {
+            request
+        }
+    }
+
+    /// Construct project base URL
+    fn project_url(&self, project_id: &str) -> Result<Url> {
         self.api_url
             .join(&format!("projects/{}/", urlencoding::encode(project_id)))
             .map_err(|e| CILensError::Config(format!("Invalid project URL: {e}")))
     }
-}
 
-impl GitLabClient {
+    /// Construct full pipeline URL
+    fn pipeline_url(&self, project_id: &str, pipeline_id: u32) -> Result<Url> {
+        self.project_url(project_id)?
+            .join(&format!("pipelines/{pipeline_id}"))
+            .map_err(|e| CILensError::Config(format!("Invalid pipeline URL: {e}")))
+    }
+
+    /// Fetch a page of pipelines
     pub async fn fetch_pipeline_list_page(
         &self,
         project_id: &str,
@@ -70,7 +91,7 @@ impl GitLabClient {
         branch: Option<&str>,
     ) -> Result<Vec<GitLabPipelineListDto>> {
         let url = self
-            .api_url_project(project_id)?
+            .project_url(project_id)?
             .join("pipelines")
             .map_err(|e| CILensError::Config(format!("Invalid pipelines URL: {e}")))?;
 
@@ -78,36 +99,27 @@ impl GitLabClient {
             .client
             .get(url)
             .query(&[("page", page), ("per_page", per_page)]);
-
         if let Some(branch) = branch {
             request = request.query(&[("ref", branch)]);
         }
-
-        if let Some(token) = &self.token {
-            request = request.bearer_auth(token.as_str());
-        }
+        request = self.auth_request(request);
 
         let response = request.send().await?.error_for_status()?;
-
         let pipelines = response.json::<Vec<GitLabPipelineListDto>>().await?;
-
         Ok(pipelines)
     }
 
-    pub async fn fetch_pipeline(&self, project_id: &str, id: u32) -> Result<GitLabPipelineDto> {
-        let url = self
-            .api_url_project(project_id)?
-            .join(&format!("pipelines/{id}"))
-            .map_err(|e| CILensError::Config(format!("Invalid pipeline URL: {e}")))?;
-
-        let mut request = self.client.get(url);
-        if let Some(token) = &self.token {
-            request = request.bearer_auth(token.as_str());
-        }
+    /// Fetch a single pipeline
+    pub async fn fetch_pipeline(
+        &self,
+        project_id: &str,
+        pipeline_id: u32,
+    ) -> Result<GitLabPipelineDto> {
+        let url = self.pipeline_url(project_id, pipeline_id)?;
+        let request = self.auth_request(self.client.get(url));
 
         let response = request.send().await?.error_for_status()?;
         let pipeline = response.json::<GitLabPipelineDto>().await?;
-
         Ok(pipeline)
     }
 }
