@@ -3,8 +3,7 @@ use futures::{stream, StreamExt, TryStreamExt};
 use log::{info, warn};
 use serde::Deserialize;
 
-use super::client::GitLabClient;
-use crate::auth::Token;
+use super::core::GitLabProvider;
 use crate::error::Result;
 use crate::insights::{CIInsights, PipelineSummary};
 
@@ -16,18 +15,7 @@ pub struct GitLabPipeline {
     duration: usize,
 }
 
-pub struct GitLabProvider {
-    client: GitLabClient,
-    project_id: String,
-}
-
 impl GitLabProvider {
-    pub fn new(base_url: &str, project_id: String, token: Option<Token>) -> Result<Self> {
-        let client = GitLabClient::new(base_url, token)?;
-
-        Ok(Self { client, project_id })
-    }
-
     pub async fn fetch_pipelines(
         &self,
         limit: usize,

@@ -55,7 +55,7 @@ impl GitLabClient {
             .map_err(|e| CILensError::Config(format!("Invalid pipelines URL: {e}")))?;
 
         let mut request = self
-            .client()
+            .client
             .get(url)
             .query(&[("page", page), ("per_page", per_page)]);
         if let Some(branch) = branch {
@@ -75,7 +75,7 @@ impl GitLabClient {
         pipeline_id: u32,
     ) -> Result<GitLabPipelineDto> {
         let url = self.pipeline_url(project_id, pipeline_id)?;
-        let request = self.auth_request(self.client().get(url));
+        let request = self.auth_request(self.client.get(url));
 
         let response = request.send().await?.error_for_status()?;
         let pipeline = response.json::<GitLabPipelineDto>().await?;

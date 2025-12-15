@@ -5,9 +5,9 @@ use crate::auth::Token;
 use crate::error::{CILensError, Result};
 
 pub struct GitLabClient {
-    client: Client,
-    api_url: Url,
-    token: Option<Token>,
+    pub client: Client,
+    pub api_url: Url,
+    pub token: Option<Token>,
 }
 
 impl GitLabClient {
@@ -29,12 +29,6 @@ impl GitLabClient {
         })
     }
 
-    /// Helper to get client
-    pub fn client(&self) -> &Client {
-        &self.client
-    }
-
-    /// Helper to build authenticated requests
     pub fn auth_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         if let Some(token) = &self.token {
             request.bearer_auth(token.as_str())
@@ -43,7 +37,6 @@ impl GitLabClient {
         }
     }
 
-    /// Construct project base URL
     pub fn project_url(&self, project_id: &str) -> Result<Url> {
         self.api_url
             .join(&format!("projects/{}/", urlencoding::encode(project_id)))

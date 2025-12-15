@@ -1,4 +1,4 @@
 mod core;
 mod pipelines;
 
-pub(crate) use core::GitLabClient;
+pub use core::GitLabClient;
