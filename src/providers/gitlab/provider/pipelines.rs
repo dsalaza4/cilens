@@ -60,6 +60,7 @@ impl GitLabProvider {
             return None;
         }
 
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let duration = node.duration.unwrap() as usize;
         let jobs = Self::transform_jobs(node.jobs);
 
@@ -82,6 +83,7 @@ impl GitLabProvider {
                     .flatten()
                     .flatten()
                     .filter_map(|job_node| {
+                        #[allow(clippy::cast_precision_loss)]
                         job_node.duration.map(|dur| GitLabJob {
                             name: job_node.name.unwrap_or_default(),
                             stage: job_node.stage.and_then(|s| s.name).unwrap_or_default(),
@@ -263,7 +265,7 @@ impl GitLabProvider {
         let mut pipeline_types: Vec<PipelineType> = clusters
             .into_iter()
             .map(|(job_names, cluster_pipelines)| {
-                Self::create_pipeline_type(&job_names, cluster_pipelines, total_pipelines)
+                Self::create_pipeline_type(&job_names, &cluster_pipelines, total_pipelines)
             })
             .collect();
 
@@ -273,10 +275,11 @@ impl GitLabProvider {
 
     fn create_pipeline_type(
         job_names: &[String],
-        pipelines: Vec<&GitLabPipeline>,
+        pipelines: &[&GitLabPipeline],
         total_pipelines: usize,
     ) -> PipelineType {
         let count = pipelines.len();
+        #[allow(clippy::cast_precision_loss)]
         let percentage = (count as f64 / total_pipelines.max(1) as f64) * 100.0;
 
         // Generate label from job names
@@ -305,10 +308,10 @@ impl GitLabProvider {
         };
 
         // Extract common characteristics
-        let (stages, ref_patterns, sources) = Self::extract_characteristics(&pipelines);
+        let (stages, ref_patterns, sources) = Self::extract_characteristics(pipelines);
 
         // Calculate metrics
-        let metrics = Self::calculate_type_metrics(&pipelines);
+        let metrics = Self::calculate_type_metrics(pipelines);
 
         PipelineType {
             label,
@@ -358,20 +361,35 @@ impl GitLabProvider {
         items.into_iter().take(5).map(|(name, _)| name).collect()
     }
 
-    fn retried_jobs(pipelines: &[&GitLabPipeline]) -> IndexMap<String, usize> {
+    fn retry_rates(pipelines: &[&GitLabPipeline]) -> IndexMap<String, f64> {
         let mut retry_counts: HashMap<String, usize> = HashMap::new();
+        let mut total_counts: HashMap<String, usize> = HashMap::new();
 
         for pipeline in pipelines {
             for job in &pipeline.jobs {
+                *total_counts.entry(job.name.clone()).or_insert(0) += 1;
                 if job.retried {
                     *retry_counts.entry(job.name.clone()).or_insert(0) += 1;
                 }
             }
         }
 
-        let mut items: Vec<(String, usize)> = retry_counts.into_iter().collect();
-        items.sort_by(|a, b| b.1.cmp(&a.1));
-        items.into_iter().collect()
+        let mut items: Vec<(String, f64)> = retry_counts
+            .into_iter()
+            .filter_map(|(name, retried)| {
+                let total = total_counts.get(&name)?;
+                // Only include jobs that appear at least twice to filter noise
+                if *total < 2 {
+                    return None;
+                }
+                #[allow(clippy::cast_precision_loss)]
+                let rate = (retried as f64 / *total as f64) * 100.0;
+                Some((name, rate))
+            })
+            .collect();
+
+        items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        items.into_iter().take(5).collect()
     }
 
     fn calculate_type_metrics(pipelines: &[&GitLabPipeline]) -> TypeMetrics {
@@ -385,20 +403,22 @@ impl GitLabProvider {
 
         let failed_pipelines = pipelines.iter().filter(|p| p.status == "failed").count();
 
+        #[allow(clippy::cast_precision_loss)]
         let success_rate = if total_pipelines > 0 {
             (successful_pipelines.len() as f64 / total_pipelines as f64) * 100.0
         } else {
             0.0
         };
 
-        let average_duration_seconds = if !successful_pipelines.is_empty() {
+        #[allow(clippy::cast_precision_loss)]
+        let average_duration_seconds = if successful_pipelines.is_empty() {
+            0.0
+        } else {
             successful_pipelines
                 .iter()
                 .map(|p| p.duration as f64)
                 .sum::<f64>()
                 / successful_pipelines.len() as f64
-        } else {
-            0.0
         };
 
         let critical_paths: Vec<_> = successful_pipelines
@@ -406,7 +426,10 @@ impl GitLabProvider {
             .filter_map(|p| Self::calculate_critical_path(p))
             .collect();
 
-        let critical_path = if !critical_paths.is_empty() {
+        let critical_path = if critical_paths.is_empty() {
+            None
+        } else {
+            #[allow(clippy::cast_precision_loss)]
             let average_duration = critical_paths
                 .iter()
                 .map(|cp| cp.average_duration_seconds)
@@ -417,11 +440,9 @@ impl GitLabProvider {
                 jobs: critical_paths[0].jobs.clone(),
                 average_duration_seconds: average_duration,
             })
-        } else {
-            None
         };
 
-        let retried_jobs = Self::retried_jobs(pipelines);
+        let retry_rates = Self::retry_rates(pipelines);
 
         TypeMetrics {
             total_pipelines,
@@ -430,7 +451,7 @@ impl GitLabProvider {
             success_rate,
             average_duration_seconds,
             critical_path,
-            retried_jobs,
+            retry_rates,
         }
     }
 }

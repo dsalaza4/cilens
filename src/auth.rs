@@ -89,7 +89,7 @@ mod tests {
         let sensitive_token = "ghp_very_secret_token_do_not_log";
         let token = Token::from(sensitive_token);
 
-        let debug_output = format!("{:?}", token);
+        let debug_output = format!("{token:?}");
 
         // Ensure the actual token value is not in the debug output
         assert_eq!(debug_output, "<redacted>");
@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn test_token_debug_does_not_expose_empty_token() {
         let token = Token::from("");
-        let debug_output = format!("{:?}", token);
+        let debug_output = format!("{token:?}");
 
         assert_eq!(debug_output, "<redacted>");
     }
@@ -150,7 +150,7 @@ mod tests {
         let token = Token::from(github_token);
 
         assert_eq!(token.as_str(), github_token);
-        assert_eq!(format!("{:?}", token), "<redacted>");
+        assert_eq!(format!("{token:?}"), "<redacted>");
     }
 
     #[test]
@@ -159,7 +159,7 @@ mod tests {
         let token = Token::from(gitlab_token);
 
         assert_eq!(token.as_str(), gitlab_token);
-        assert_eq!(format!("{:?}", token), "<redacted>");
+        assert_eq!(format!("{token:?}"), "<redacted>");
     }
 
     #[test]
@@ -168,12 +168,12 @@ mod tests {
         let token = Token::from(bearer_token);
 
         assert_eq!(token.as_str(), bearer_token);
-        assert_eq!(format!("{:?}", token), "<redacted>");
+        assert_eq!(format!("{token:?}"), "<redacted>");
     }
 
     #[test]
     fn test_token_can_be_used_in_vec() {
-        let tokens = vec![
+        let tokens = [
             Token::from("token1"),
             Token::from("token2"),
             Token::from("token3"),
@@ -199,7 +199,7 @@ mod tests {
             endpoint: String::from("https://api.example.com"),
         };
 
-        let debug_output = format!("{:?}", client);
+        let debug_output = format!("{client:?}");
 
         // Ensure the token is redacted in the struct's debug output
         assert!(debug_output.contains("<redacted>"));

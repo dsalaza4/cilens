@@ -18,9 +18,10 @@ impl GitLabClient {
         limit: usize,
         ref_: Option<&str>,
     ) -> Result<Vec<fetch_pipelines::FetchPipelinesProjectPipelinesNodes>> {
+        const PAGE_SIZE: i64 = 50;
+
         let mut all_pipelines = Vec::new();
         let mut cursor: Option<String> = None;
-        const PAGE_SIZE: i64 = 50;
 
         loop {
             let remaining = limit.saturating_sub(all_pipelines.len());
@@ -28,13 +29,14 @@ impl GitLabClient {
                 break;
             }
 
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             let fetch_count = std::cmp::min(remaining, PAGE_SIZE as usize) as i64;
 
             let variables = fetch_pipelines::Variables {
                 project_path: project_path.to_string(),
                 first: fetch_count,
                 after: cursor.clone(),
-                ref_: ref_.map(|r| r.to_string()),
+                ref_: ref_.map(std::string::ToString::to_string),
             };
 
             let request_body = FetchPipelines::build_query(variables);
@@ -52,9 +54,9 @@ impl GitLabClient {
             if let Some(errors) = response_body.errors {
                 let error_messages: Vec<String> =
                     errors.iter().map(|e| e.message.clone()).collect();
+                let joined_errors = error_messages.join(", ");
                 return Err(CILensError::Config(format!(
-                    "GraphQL errors: {}",
-                    error_messages.join(", ")
+                    "GraphQL errors: {joined_errors}"
                 )));
             }
 
@@ -63,13 +65,12 @@ impl GitLabClient {
             })?;
 
             let project = data.project.ok_or_else(|| {
-                CILensError::Config(format!("Project '{}' not found", project_path))
+                CILensError::Config(format!("Project '{project_path}' not found"))
             })?;
 
             let pipelines = project.pipelines.ok_or_else(|| {
                 CILensError::Config(format!(
-                    "No pipeline data available for project '{}'",
-                    project_path
+                    "No pipeline data available for project '{project_path}'"
                 ))
             })?;
 

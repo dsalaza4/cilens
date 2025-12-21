@@ -37,5 +37,5 @@ pub struct TypeMetrics {
     pub success_rate: f64,
     pub average_duration_seconds: f64,
     pub critical_path: Option<CriticalPath>,
-    pub retried_jobs: IndexMap<String, usize>,
+    pub retry_rates: IndexMap<String, f64>,
 }
