@@ -19,6 +19,13 @@ pub struct CriticalPath {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct FlakyJobMetrics {
+    pub total_occurrences: usize,
+    pub retry_count: usize,
+    pub flakiness_score: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PipelineType {
     pub label: String,
     pub count: usize,
@@ -37,5 +44,5 @@ pub struct TypeMetrics {
     pub success_rate: f64,
     pub average_duration_seconds: f64,
     pub critical_path: Option<CriticalPath>,
-    pub retry_rates: IndexMap<String, f64>,
+    pub flaky_jobs: IndexMap<String, FlakyJobMetrics>,
 }

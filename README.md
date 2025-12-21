@@ -6,7 +6,7 @@ A Rust CLI tool for collecting and analyzing CI/CD insights from GitLab.
 
 - **Pipeline Type Clustering** - Automatically groups pipelines by job signature to identify distinct workflow patterns
 - **Critical Path Analysis** - Identifies the longest dependency chain in your pipelines
-- **Retry Rate Tracking** - Measures job reliability by calculating retry rates (top 5 most retried jobs)
+- **Flakiness Detection** - Identifies unreliable jobs that fail intermittently and need retries (top 5 flakiest jobs)
 - **Success Rate Metrics** - Per-pipeline-type success rates and failure analysis
 - **Duration Analytics** - Average duration tracking for pipelines and critical paths
 
@@ -80,10 +80,22 @@ The tool outputs detailed insights grouped by pipeline type:
           "jobs": ["dns-infra plan"],
           "average_duration_seconds": 635.0
         },
-        "retry_rates": {
-          "dns-infra plan": 44.44,
-          "vpc-infra lint": 44.44,
-          "lint": 28.57
+        "flaky_jobs": {
+          "dns-infra plan": {
+            "total_occurrences": 9,
+            "retry_count": 4,
+            "flakiness_score": 44.44
+          },
+          "vpc-infra lint": {
+            "total_occurrences": 9,
+            "retry_count": 4,
+            "flakiness_score": 44.44
+          },
+          "lint": {
+            "total_occurrences": 14,
+            "retry_count": 4,
+            "flakiness_score": 28.57
+          }
         }
       }
     }
@@ -95,7 +107,7 @@ The tool outputs detailed insights grouped by pipeline type:
 
 - **Pipeline Type Clustering**: Groups pipelines by job signature (e.g., all pipelines with jobs A+B+C become one type)
 - **Critical Path**: Shows the longest dependency chain affecting pipeline duration
-- **Retry Rates**: Percentage of times each job needed to be retried (only jobs appearing 2+ times, top 5 shown)
+- **Flaky Jobs**: Identifies unreliable jobs with flakiness score (% of runs needing retry), retry count, and total occurrences (only jobs appearing 2+ times, top 5 shown)
 - **Success Rate**: Percentage of successful pipeline runs for each type
 
 ## Future Work
@@ -104,23 +116,7 @@ The following insights would provide additional value for teams analyzing their 
 
 ### High-Impact Additions
 
-#### 1. Flakiness Detection
-
-Track jobs that fail intermittently and succeed on retry:
-
-```json
-"flaky_jobs": {
-  "job-name": {
-    "flakiness_score": 0.35,
-    "failure_count": 7,
-    "retry_success_count": 3
-  }
-}
-```
-
-**Value**: Identifies unreliable tests/jobs that waste developer time and erode confidence in CI.
-
-#### 2. Duration Percentiles (P50, P95, P99)
+#### 1. Duration Percentiles (P50, P95, P99)
 
 ```json
 "duration_percentiles": {
@@ -132,7 +128,7 @@ Track jobs that fail intermittently and succeed on retry:
 
 **Value**: Shows realistic expectations vs average (which can be skewed by outliers).
 
-#### 3. Slowest Jobs (Bottlenecks)
+#### 2. Slowest Jobs (Bottlenecks)
 
 ```json
 "slowest_jobs": [
@@ -146,7 +142,7 @@ Track jobs that fail intermittently and succeed on retry:
 
 **Value**: Identifies optimization targets with highest ROI.
 
-#### 4. Waste Metrics
+#### 3. Waste Metrics
 
 ```json
 "waste_metrics": {
@@ -158,7 +154,7 @@ Track jobs that fail intermittently and succeed on retry:
 
 **Value**: Quantifies the business impact of failures and inefficiencies.
 
-#### 5. Failure Patterns
+#### 4. Failure Patterns
 
 ```json
 "most_failing_jobs": [
@@ -170,9 +166,9 @@ Track jobs that fail intermittently and succeed on retry:
 ]
 ```
 
-**Value**: Different insight than retry_rates - shows chronic failures vs intermittent retries.
+**Value**: Shows jobs with chronic failures (different from flakiness which indicates intermittent issues).
 
-#### 6. Parallelization Efficiency
+#### 5. Parallelization Efficiency
 
 ```json
 "parallelization_efficiency": {
@@ -185,7 +181,7 @@ Track jobs that fail intermittently and succeed on retry:
 
 **Value**: Reveals if you're effectively using parallel runners.
 
-#### 7. Time-to-Feedback
+#### 6. Time-to-Feedback
 
 ```json
 "feedback_metrics": {
@@ -196,7 +192,7 @@ Track jobs that fail intermittently and succeed on retry:
 
 **Value**: Critical for developer experience - faster feedback = faster fixes.
 
-#### 8. Stage-Level Insights
+#### 7. Stage-Level Insights
 
 ```json
 "stage_breakdown": [
@@ -212,7 +208,7 @@ Track jobs that fail intermittently and succeed on retry:
 
 **Value**: Helps identify which stages are problematic or slow.
 
-#### 9. Trend Indicators
+#### 8. Trend Indicators
 
 (When analyzing multiple time windows)
 
@@ -226,7 +222,7 @@ Track jobs that fail intermittently and succeed on retry:
 
 **Value**: Shows if things are getting better or worse over time.
 
-#### 10. Job Dependency Impact
+#### 9. Job Dependency Impact
 
 ```json
 "blocking_jobs": [

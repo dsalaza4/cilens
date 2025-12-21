@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use super::core::GitLabProvider;
 use crate::error::Result;
-use crate::insights::{CIInsights, CriticalPath, PipelineType, TypeMetrics};
+use crate::insights::{CIInsights, CriticalPath, FlakyJobMetrics, PipelineType, TypeMetrics};
 use crate::providers::gitlab::client::pipelines::fetch_pipelines;
 
 #[derive(Debug)]
@@ -22,6 +22,7 @@ struct GitLabJob {
     name: String,
     stage: String,
     duration: f64,
+    status: String,
     retried: bool,
     needs: Vec<String>,
 }
@@ -88,6 +89,10 @@ impl GitLabProvider {
                             name: job_node.name.unwrap_or_default(),
                             stage: job_node.stage.and_then(|s| s.name).unwrap_or_default(),
                             duration: dur as f64,
+                            status: job_node
+                                .status
+                                .map(|s| format!("{s:?}"))
+                                .unwrap_or_default(),
                             retried: job_node.retried.unwrap_or(false),
                             needs: job_node
                                 .needs
@@ -361,35 +366,64 @@ impl GitLabProvider {
         items.into_iter().take(5).map(|(name, _)| name).collect()
     }
 
-    fn retry_rates(pipelines: &[&GitLabPipeline]) -> IndexMap<String, f64> {
-        let mut retry_counts: HashMap<String, usize> = HashMap::new();
+    fn is_flaky(jobs: &[&GitLabJob]) -> bool {
+        // Flaky = failed initially but succeeded after retry
+        let was_retried = jobs.iter().any(|j| j.retried);
+        let final_succeeded = jobs
+            .iter()
+            .find(|j| !j.retried)
+            .is_some_and(|j| j.status == "SUCCESS");
+
+        was_retried && final_succeeded
+    }
+
+    fn find_flaky_jobs(pipelines: &[&GitLabPipeline]) -> IndexMap<String, FlakyJobMetrics> {
+        let mut flaky_counts: HashMap<String, usize> = HashMap::new();
         let mut total_counts: HashMap<String, usize> = HashMap::new();
 
+        // Analyze each pipeline for flaky jobs
         for pipeline in pipelines {
+            let mut jobs_by_name: HashMap<String, Vec<&GitLabJob>> = HashMap::new();
             for job in &pipeline.jobs {
-                *total_counts.entry(job.name.clone()).or_insert(0) += 1;
-                if job.retried {
-                    *retry_counts.entry(job.name.clone()).or_insert(0) += 1;
+                jobs_by_name.entry(job.name.clone()).or_default().push(job);
+            }
+
+            for (name, jobs) in jobs_by_name {
+                *total_counts.entry(name.clone()).or_insert(0) += 1;
+                if Self::is_flaky(&jobs) {
+                    *flaky_counts.entry(name).or_insert(0) += 1;
                 }
             }
         }
 
-        let mut items: Vec<(String, f64)> = retry_counts
+        // Calculate scores and return top 5
+        let mut results: Vec<(String, FlakyJobMetrics)> = flaky_counts
             .into_iter()
-            .filter_map(|(name, retried)| {
-                let total = total_counts.get(&name)?;
-                // Only include jobs that appear at least twice to filter noise
-                if *total < 2 {
-                    return None;
+            .filter_map(|(name, flaky_count)| {
+                let total = *total_counts.get(&name)?;
+                if total < 2 {
+                    return None; // Filter noise
                 }
                 #[allow(clippy::cast_precision_loss)]
-                let rate = (retried as f64 / *total as f64) * 100.0;
-                Some((name, rate))
+                let score = (flaky_count as f64 / total as f64) * 100.0;
+
+                Some((
+                    name,
+                    FlakyJobMetrics {
+                        total_occurrences: total,
+                        retry_count: flaky_count,
+                        flakiness_score: score,
+                    },
+                ))
             })
             .collect();
 
-        items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        items.into_iter().take(5).collect()
+        results.sort_by(|a, b| {
+            b.1.flakiness_score
+                .partial_cmp(&a.1.flakiness_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.into_iter().take(5).collect()
     }
 
     fn calculate_type_metrics(pipelines: &[&GitLabPipeline]) -> TypeMetrics {
@@ -442,7 +476,7 @@ impl GitLabProvider {
             })
         };
 
-        let retry_rates = Self::retry_rates(pipelines);
+        let flaky_jobs = Self::find_flaky_jobs(pipelines);
 
         TypeMetrics {
             total_pipelines,
@@ -451,7 +485,7 @@ impl GitLabProvider {
             success_rate,
             average_duration_seconds,
             critical_path,
-            retry_rates,
+            flaky_jobs,
         }
     }
 }
