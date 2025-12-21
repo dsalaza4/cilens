@@ -6,6 +6,8 @@ query FetchPipelines($projectPath: ID!, $first: Int!, $after: String, $ref: Stri
         endCursor
       }
       nodes {
+        ref
+        source
         status
         duration
         jobs {
@@ -13,6 +15,9 @@ query FetchPipelines($projectPath: ID!, $first: Int!, $after: String, $ref: Stri
             name
             status
             duration
+            stage {
+              name
+            }
             needs {
               nodes {
                 name

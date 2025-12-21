@@ -6,22 +6,34 @@ pub struct CIInsights {
     pub provider: String,
     pub project: String,
     pub collected_at: DateTime<Utc>,
-    pub pipeline_summary: PipelineSummary,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PipelineSummary {
     pub total_pipelines: usize,
-    pub successful_pipelines: usize,
-    pub failed_pipelines: usize,
-    pub pipeline_success_rate: f64,
-    pub average_successful_pipeline_duration_seconds: f64,
-    pub average_critical_path_duration_seconds: f64,
-    pub example_critical_path: Option<CriticalPath>,
+    pub total_pipeline_types: usize,
+    pub pipeline_types: Vec<PipelineType>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CriticalPath {
     pub jobs: Vec<String>,
-    pub total_duration_seconds: f64,
+    pub average_duration_seconds: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PipelineType {
+    pub label: String,
+    pub count: usize,
+    pub percentage: f64,
+    pub stages: Vec<String>,
+    pub ref_patterns: Vec<String>,
+    pub sources: Vec<String>,
+    pub metrics: TypeMetrics,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TypeMetrics {
+    pub total_pipelines: usize,
+    pub successful_pipelines: usize,
+    pub failed_pipelines: usize,
+    pub success_rate: f64,
+    pub average_duration_seconds: f64,
+    pub critical_path: Option<CriticalPath>,
 }
