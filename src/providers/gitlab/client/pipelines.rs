@@ -11,6 +11,17 @@ use crate::error::{CILensError, Result};
 )]
 pub struct FetchPipelines;
 
+pub type CiPipelineID = String;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "src/providers/gitlab/client/schema.json",
+    query_path = "src/providers/gitlab/client/pipelines.graphql",
+    query_name = "FetchPipelineJobs",
+    response_derives = "Debug,PartialEq,Clone"
+)]
+pub struct FetchPipelineJobs;
+
 impl GitLabClient {
     async fn fetch_pipelines_with_status(
         &self,
@@ -19,7 +30,7 @@ impl GitLabClient {
         ref_: Option<&str>,
         status: Option<fetch_pipelines::PipelineStatusEnum>,
     ) -> Result<Vec<fetch_pipelines::FetchPipelinesProjectPipelinesNodes>> {
-        const PAGE_SIZE: i64 = 50;
+        const PAGE_SIZE: i64 = 100;
 
         let mut all_pipelines = Vec::new();
         let mut cursor: Option<String> = None;
@@ -125,5 +136,77 @@ impl GitLabClient {
         all_pipelines.truncate(limit);
 
         Ok(all_pipelines)
+    }
+
+    pub async fn fetch_pipeline_jobs(
+        &self,
+        project_path: &str,
+        pipeline_id: String,
+    ) -> Result<Vec<fetch_pipeline_jobs::FetchPipelineJobsProjectPipelineJobsNodes>> {
+        const PAGE_SIZE: i64 = 100;
+        let mut all_jobs = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            let variables = fetch_pipeline_jobs::Variables {
+                project_path: project_path.to_string(),
+                pipeline_id: pipeline_id.clone(),
+                first: PAGE_SIZE,
+                after: cursor.clone(),
+            };
+
+            let request_body = FetchPipelineJobs::build_query(variables);
+
+            let request = self
+                .client
+                .post(self.graphql_url.clone())
+                .json(&request_body);
+            let request = self.auth_request(request);
+
+            let response = request.send().await?;
+            let response_body: graphql_client::Response<fetch_pipeline_jobs::ResponseData> =
+                response.json().await?;
+
+            if let Some(errors) = response_body.errors {
+                let error_messages: Vec<String> =
+                    errors.iter().map(|e| e.message.clone()).collect();
+                let joined_errors = error_messages.join(", ");
+                return Err(CILensError::Config(format!(
+                    "GraphQL errors: {joined_errors}"
+                )));
+            }
+
+            let data = response_body.data.ok_or_else(|| {
+                CILensError::Config("GraphQL response contained no data".to_string())
+            })?;
+
+            let project = data.project.ok_or_else(|| {
+                CILensError::Config(format!("Project '{project_path}' not found"))
+            })?;
+
+            let pipeline = project.pipeline.ok_or_else(|| {
+                CILensError::Config(format!("Pipeline '{pipeline_id}' not found"))
+            })?;
+
+            let jobs = pipeline.jobs.ok_or_else(|| {
+                CILensError::Config(format!(
+                    "No job data available for pipeline '{pipeline_id}'"
+                ))
+            })?;
+
+            all_jobs.extend(jobs.nodes.into_iter().flatten().flatten());
+
+            if !jobs.page_info.has_next_page {
+                break;
+            }
+
+            cursor = jobs.page_info.end_cursor;
+
+            if cursor.is_none() {
+                break;
+            }
+        }
+
+        Ok(all_jobs)
     }
 }

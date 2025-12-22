@@ -30,6 +30,8 @@ pub struct PipelineType {
     pub label: String,
     pub count: usize,
     pub percentage: f64,
+    pub jobs: Vec<String>,
+    pub ids: Vec<String>,
     pub stages: Vec<String>,
     pub ref_patterns: Vec<String>,
     pub sources: Vec<String>,

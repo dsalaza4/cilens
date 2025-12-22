@@ -12,23 +12,40 @@ query FetchPipelines(
         endCursor
       }
       nodes {
+        id
         ref
         source
         status
         duration
-        jobs {
-          nodes {
+      }
+    }
+  }
+}
+
+query FetchPipelineJobs(
+  $projectPath: ID!
+  $pipelineId: CiPipelineID!
+  $first: Int!
+  $after: String
+) {
+  project(fullPath: $projectPath) {
+    pipeline(id: $pipelineId) {
+      jobs(first: $first, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          name
+          status
+          duration
+          retried
+          stage {
             name
-            status
-            duration
-            retried
-            stage {
+          }
+          needs {
+            nodes {
               name
-            }
-            needs {
-              nodes {
-                name
-              }
             }
           }
         }

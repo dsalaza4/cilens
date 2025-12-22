@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use super::core::GitLabProvider;
 use crate::error::Result;
 use crate::insights::{CIInsights, CriticalPath, FlakyJobMetrics, PipelineType, TypeMetrics};
-use crate::providers::gitlab::client::pipelines::fetch_pipelines;
+use crate::providers::gitlab::client::pipelines::{fetch_pipeline_jobs, fetch_pipelines};
 
 #[derive(Debug)]
 struct GitLabPipeline {
+    id: String,
     ref_: String,
     source: String,
     status: String,
@@ -40,72 +41,95 @@ impl GitLabProvider {
             .fetch_pipelines(&self.project_path, limit, ref_)
             .await?;
 
-        let pipelines: Vec<GitLabPipeline> = pipeline_nodes
+        info!(
+            "Fetching jobs for {} pipelines in parallel...",
+            pipeline_nodes.len()
+        );
+
+        // Fetch jobs for all pipelines concurrently
+        let futures: Vec<_> = pipeline_nodes
             .into_iter()
-            .filter_map(Self::transform_pipeline_node)
+            .map(|node| self.transform_pipeline_with_jobs(node))
             .collect();
+
+        let results = futures::future::join_all(futures).await;
+
+        // Collect successful results
+        let mut pipelines = Vec::new();
+        for result in results {
+            match result {
+                Ok(Some(pipeline)) => pipelines.push(pipeline),
+                Ok(None) => {} // Pipeline filtered out (no duration)
+                Err(e) => return Err(e),
+            }
+        }
 
         info!("Processed {} pipelines", pipelines.len());
 
         Ok(pipelines)
     }
 
-    fn transform_pipeline_node(
+    async fn transform_pipeline_with_jobs(
+        &self,
         node: fetch_pipelines::FetchPipelinesProjectPipelinesNodes,
-    ) -> Option<GitLabPipeline> {
-        // Only include pipelines with duration (status filtering done at GraphQL level)
-        let duration = node.duration?;
+    ) -> Result<Option<GitLabPipeline>> {
+        // Only include pipelines with duration
+        let Some(duration) = node.duration else {
+            return Ok(None);
+        };
 
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let duration = duration as usize;
-        let jobs = Self::transform_jobs(node.jobs);
 
-        Some(GitLabPipeline {
+        // Fetch all jobs for this pipeline
+        let job_nodes = self
+            .client
+            .fetch_pipeline_jobs(&self.project_path, node.id.clone())
+            .await?;
+
+        let jobs = Self::transform_job_nodes(job_nodes);
+
+        Ok(Some(GitLabPipeline {
+            id: node.id,
             ref_: node.ref_.unwrap_or_default(),
             source: node.source.unwrap_or_default(),
             status: format!("{:?}", node.status).to_lowercase(),
             duration,
             jobs,
-        })
+        }))
     }
 
-    fn transform_jobs(
-        job_conn: Option<fetch_pipelines::FetchPipelinesProjectPipelinesNodesJobs>,
+    fn transform_job_nodes(
+        job_nodes: Vec<fetch_pipeline_jobs::FetchPipelineJobsProjectPipelineJobsNodes>,
     ) -> Vec<GitLabJob> {
-        job_conn
-            .map(|conn| {
-                conn.nodes
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .filter_map(|job_node| {
-                        #[allow(clippy::cast_precision_loss)]
-                        job_node.duration.map(|dur| GitLabJob {
-                            name: job_node.name.unwrap_or_default(),
-                            stage: job_node.stage.and_then(|s| s.name).unwrap_or_default(),
-                            duration: dur as f64,
-                            status: job_node
-                                .status
-                                .map(|s| format!("{s:?}"))
-                                .unwrap_or_default(),
-                            retried: job_node.retried.unwrap_or(false),
-                            needs: job_node
-                                .needs
-                                .map(|needs_conn| {
-                                    needs_conn
-                                        .nodes
-                                        .into_iter()
-                                        .flatten()
-                                        .flatten()
-                                        .filter_map(|need| need.name)
-                                        .collect()
-                                })
-                                .unwrap_or_default(),
+        job_nodes
+            .into_iter()
+            .map(|job_node| {
+                #[allow(clippy::cast_precision_loss)]
+                GitLabJob {
+                    name: job_node.name.unwrap_or_default(),
+                    stage: job_node.stage.and_then(|s| s.name).unwrap_or_default(),
+                    duration: job_node.duration.unwrap_or(0) as f64,
+                    status: job_node
+                        .status
+                        .map(|s| format!("{s:?}"))
+                        .unwrap_or_default(),
+                    retried: job_node.retried.unwrap_or(false),
+                    needs: job_node
+                        .needs
+                        .map(|needs_conn| {
+                            needs_conn
+                                .nodes
+                                .into_iter()
+                                .flatten()
+                                .flatten()
+                                .filter_map(|need| need.name)
+                                .collect()
                         })
-                    })
-                    .collect()
+                        .unwrap_or_default(),
+                }
             })
-            .unwrap_or_default()
+            .collect()
     }
 
     fn calculate_critical_path(pipeline: &GitLabPipeline) -> Option<CriticalPath> {
@@ -310,6 +334,9 @@ impl GitLabProvider {
         // Extract common characteristics
         let (stages, ref_patterns, sources) = Self::extract_characteristics(pipelines);
 
+        // Collect pipeline IDs
+        let ids: Vec<String> = pipelines.iter().map(|p| p.id.clone()).collect();
+
         // Calculate metrics
         let metrics = Self::calculate_type_metrics(pipelines);
 
@@ -317,6 +344,8 @@ impl GitLabProvider {
             label,
             count,
             percentage,
+            jobs: job_names.to_vec(),
+            ids,
             stages,
             ref_patterns,
             sources,
