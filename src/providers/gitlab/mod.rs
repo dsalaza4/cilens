@@ -1,4 +1,7 @@
 mod client;
-mod provider;
+mod clustering;
+mod core;
+mod critical_path;
+mod metrics;
 
-pub use provider::GitLabProvider;
+pub use core::GitLabProvider;

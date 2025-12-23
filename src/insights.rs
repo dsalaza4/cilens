@@ -18,14 +18,14 @@ pub struct CriticalPath {
     pub average_duration_seconds: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlakyJobMetrics {
     pub total_occurrences: usize,
     pub retry_count: usize,
     pub flakiness_score: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineType {
     pub label: String,
     pub count: usize,
@@ -38,7 +38,7 @@ pub struct PipelineType {
     pub metrics: TypeMetrics,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeMetrics {
     pub total_pipelines: usize,
     pub successful_pipelines: usize,
