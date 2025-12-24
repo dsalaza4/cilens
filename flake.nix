@@ -29,6 +29,8 @@
               pkgs.cargo
               pkgs.cargo-dist
               pkgs.rustc
+              pkgs.rustfmt
+              pkgs.rustPackages.clippy
 
               self'.packages.default
             ];

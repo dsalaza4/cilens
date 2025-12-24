@@ -13,9 +13,17 @@ pub struct CIInsights {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CriticalPathJob {
+    pub name: String,
+    pub avg_duration: f64,
+    pub percentage_of_path: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CriticalPath {
-    pub jobs: Vec<String>,
-    pub average_duration_seconds: f64,
+    pub jobs: Vec<CriticalPathJob>,
+    pub total_duration: f64,
+    pub bottleneck: Option<CriticalPathJob>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

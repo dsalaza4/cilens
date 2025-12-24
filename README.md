@@ -105,8 +105,29 @@ The tool outputs detailed insights grouped by pipeline type:
         "success_rate": 40.0,
         "average_duration_seconds": 648.5,
         "critical_path": {
-          "jobs": ["dns-infra plan"],
-          "average_duration_seconds": 635.0
+          "jobs": [
+            {
+              "name": "lint",
+              "avg_duration": 45.0,
+              "percentage_of_path": 7.1
+            },
+            {
+              "name": "build",
+              "avg_duration": 180.0,
+              "percentage_of_path": 28.3
+            },
+            {
+              "name": "integration-tests",
+              "avg_duration": 410.0,
+              "percentage_of_path": 64.6
+            }
+          ],
+          "total_duration": 635.0,
+          "bottleneck": {
+            "name": "integration-tests",
+            "avg_duration": 410.0,
+            "percentage_of_path": 64.6
+          }
         },
         "flaky_jobs": {
           "dns-infra plan": {
@@ -136,7 +157,7 @@ The tool outputs detailed insights grouped by pipeline type:
 - **🧩 Pipeline Type Clustering**: Groups pipelines by job signature (exact match), then merges types with >80% job similarity to reduce fragmentation. For example, pipelines differing by only 1-2 optional jobs are merged into a single type.
 - **🔧 Jobs**: Union of all jobs that appear in this pipeline type (when types are merged, shows all jobs from variants)
 - **🔑 IDs**: GitLab pipeline IDs for all pipelines in this type (useful for drilling down)
-- **🎯 Critical Path**: The slowest execution path through the pipeline, considering both explicit job dependencies (`needs`) and stage-based execution
+- **🎯 Critical Path**: The slowest execution path through the pipeline, considering both explicit job dependencies (`needs`) and stage-based execution. Shows each job's average duration and percentage contribution to total pipeline time. The `bottleneck` field identifies the slowest job on the critical path - the highest-impact optimization target.
 - **⚠️ Flaky Jobs**: Identifies unreliable jobs with flakiness score (% of runs needing retry), retry count, and total occurrences (only jobs appearing 2+ times, top 5 shown)
 - **✅ Success Rate**: Percentage of successful pipeline runs for each type
 
@@ -238,16 +259,3 @@ The following insights would provide additional value for teams analyzing their 
 
 **Value**: Shows if things are getting better or worse over time.
 
-#### 🔗 8. Job Dependency Impact
-
-```json
-"blocking_jobs": [
-  {
-    "name": "lint",
-    "blocks_count": 25,
-    "avg_delay_caused": 45.0
-  }
-]
-```
-
-**Value**: Identifies jobs that, when slow/failing, block the most downstream work.
