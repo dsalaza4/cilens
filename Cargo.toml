@@ -1,7 +1,7 @@
 [package]
 name = "cilens"
 repository = "https:github.com/dsalaza4/cilens"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Daniel Salazar <podany270895@gmail.com>"]
 description = "A CLI tool for collecting and analyzing CI/CD insights"
