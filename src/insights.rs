@@ -14,7 +14,7 @@ pub struct CIInsights {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredecessorJob {
     pub name: String,
-    pub avg_duration: f64,
+    pub avg_duration_seconds: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +45,6 @@ pub struct TypeMetrics {
     pub successful_pipelines: usize,
     pub failed_pipelines: usize,
     pub success_rate: f64,
-    pub average_duration_seconds: f64,
+    pub avg_duration_seconds: f64,
     pub jobs: Vec<JobMetrics>,
 }

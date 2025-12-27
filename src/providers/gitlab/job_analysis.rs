@@ -69,23 +69,18 @@ fn build_predecessor_list(
     predecessors: &HashMap<&str, &str>,
     job_map: &HashMap<&str, &GitLabJob>,
 ) -> Vec<PredecessorJob> {
-    let mut result = Vec::new();
-    let mut current = job_name;
-
-    // Walk back through the critical path for this job
-    while let Some(&pred) = predecessors.get(current) {
-        if let Some(job) = job_map.get(pred) {
-            result.push(PredecessorJob {
-                name: pred.to_string(),
-                avg_duration: job.duration,
-            });
-        }
-        current = pred;
-    }
-
-    // Reverse to show predecessors in execution order
-    result.reverse();
-    result
+    std::iter::successors(Some(job_name), |&current| predecessors.get(current).copied())
+        .skip(1)
+        .filter_map(|name| {
+            job_map.get(name).map(|job| PredecessorJob {
+                name: name.to_string(),
+                avg_duration_seconds: job.duration,
+            })
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
 }
 
 fn calculate_finish_time<'a>(

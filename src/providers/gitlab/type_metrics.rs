@@ -21,7 +21,7 @@ pub fn calculate_type_metrics(pipelines: &[&GitLabPipeline], percentage: f64) ->
         successful_pipelines: successful.len(),
         failed_pipelines: failed,
         success_rate: calculate_success_rate(successful.len(), total_pipelines),
-        average_duration_seconds: calculate_avg_duration(&successful),
+        avg_duration_seconds: calculate_avg_duration(&successful),
         jobs,
     }
 }
@@ -50,35 +50,30 @@ fn calculate_all_job_metrics(
         return vec![];
     }
 
-    // Get per-pipeline job metrics (duration, time to feedback, predecessors)
+    // Get per-pipeline job metrics using functional composition
     let all_metrics: Vec<Vec<JobMetrics>> = successful_pipelines
         .iter()
         .map(|p| super::job_analysis::calculate_job_metrics(p))
         .collect();
 
-    // Collect all raw data by job name
-    let mut job_data: HashMap<String, JobData> = HashMap::new();
+    // Fold all metrics into aggregated job data
+    let job_data = all_metrics
+        .iter()
+        .flat_map(|metrics| metrics.iter())
+        .fold(HashMap::new(), accumulate_job_data);
 
-    for metrics in &all_metrics {
-        for job_metric in metrics {
-            let data = job_data
-                .entry(job_metric.name.clone())
-                .or_insert_with(JobData::new);
+    // Calculate averaged durations using functional transform
+    let avg_durations = compute_avg_durations(&job_data);
 
-            data.durations.push(job_metric.avg_duration_seconds);
-            data.total_durations
-                .push(job_metric.avg_time_to_feedback_seconds);
-            data.all_predecessors.push(job_metric.predecessors.clone());
-        }
-    }
-
-    // Get execution counts and flakiness data from ALL pipelines
+    // Get execution counts and flakiness data from all pipelines
     let (execution_counts, flaky_data) = calculate_flakiness(all_pipelines);
 
-    // Calculate complete metrics for each job
+    // Transform job data into final metrics and sort
     let mut jobs: Vec<JobMetrics> = job_data
         .into_iter()
-        .map(|(name, data)| calculate_job_metrics(&name, &data, &execution_counts, &flaky_data))
+        .map(|(name, data)| {
+            build_job_metrics(&name, &data, &avg_durations, &execution_counts, &flaky_data)
+        })
         .collect();
 
     // Sort by time to feedback descending (longest time-to-feedback first)
@@ -91,6 +86,7 @@ fn calculate_all_job_metrics(
     jobs
 }
 
+#[derive(Clone)]
 struct JobData {
     durations: Vec<f64>,
     total_durations: Vec<f64>,
@@ -105,27 +101,54 @@ impl JobData {
             all_predecessors: vec![],
         }
     }
+
+    fn with_metric(mut self, metric: &JobMetrics) -> Self {
+        self.durations.push(metric.avg_duration_seconds);
+        self.total_durations
+            .push(metric.avg_time_to_feedback_seconds);
+        self.all_predecessors.push(metric.predecessors.clone());
+        self
+    }
 }
 
-fn calculate_job_metrics(
+fn accumulate_job_data(
+    mut acc: HashMap<String, JobData>,
+    job_metric: &JobMetrics,
+) -> HashMap<String, JobData> {
+    acc.entry(job_metric.name.clone())
+        .and_modify(|data| {
+            *data = data.clone().with_metric(job_metric);
+        })
+        .or_insert_with(|| JobData::new().with_metric(job_metric));
+    acc
+}
+
+fn compute_avg_durations(job_data: &HashMap<String, JobData>) -> HashMap<String, f64> {
+    job_data
+        .iter()
+        .map(|(name, data)| (name.clone(), compute_mean(&data.durations)))
+        .collect()
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn compute_mean(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.iter().sum::<f64>() / values.len() as f64
+}
+
+fn build_job_metrics(
     name: &str,
     data: &JobData,
+    avg_durations: &HashMap<String, f64>,
     execution_counts: &HashMap<String, usize>,
     flaky_data: &HashMap<String, FlakinessMetrics>,
 ) -> JobMetrics {
-    #[allow(clippy::cast_precision_loss)]
-    let avg_duration_seconds = data.durations.iter().sum::<f64>() / data.durations.len() as f64;
-
-    #[allow(clippy::cast_precision_loss)]
-    let avg_time_to_feedback_seconds =
-        data.total_durations.iter().sum::<f64>() / data.total_durations.len() as f64;
-
-    let predecessors = aggregate_predecessors(&data.all_predecessors);
-
-    // Get total executions (always present)
+    let avg_duration_seconds = *avg_durations.get(name).unwrap_or(&0.0);
+    let avg_time_to_feedback_seconds = compute_mean(&data.total_durations);
+    let predecessors = aggregate_predecessors(&data.all_predecessors, avg_durations);
     let total_executions = *execution_counts.get(name).unwrap_or(&0);
-
-    // Get flakiness metrics if available (only for flaky jobs)
     let (flakiness_score, flaky_retries) = flaky_data
         .get(name)
         .map_or((0.0, 0), |f| (f.score, f.flaky_retries));
@@ -146,111 +169,141 @@ struct FlakinessMetrics {
     flaky_retries: usize,
 }
 
-fn aggregate_predecessors(all_predecessors: &[Vec<PredecessorJob>]) -> Vec<PredecessorJob> {
+fn aggregate_predecessors(
+    all_predecessors: &[Vec<PredecessorJob>],
+    avg_durations: &HashMap<String, f64>,
+) -> Vec<PredecessorJob> {
     if all_predecessors.is_empty() {
         return vec![];
     }
 
-    // Count how many times each predecessor appears
-    let mut pred_data: HashMap<String, Vec<f64>> = HashMap::new();
+    // Collect unique predecessor names using fold instead of mutable HashSet
+    let predecessor_names = all_predecessors
+        .iter()
+        .flat_map(|preds| preds.iter())
+        .map(|pred| pred.name.clone())
+        .fold(
+            std::collections::HashSet::new(),
+            |mut names, name| {
+                names.insert(name);
+                names
+            },
+        );
 
-    for predecessors in all_predecessors {
-        for pred in predecessors {
-            pred_data
-                .entry(pred.name.clone())
-                .or_default()
-                .push(pred.avg_duration);
-        }
-    }
-
-    let threshold = all_predecessors.len() / 2;
-
-    // Keep predecessors that appear in >50% of pipelines
-    let mut result: Vec<PredecessorJob> = pred_data
+    // Transform names into predecessor jobs with averaged durations, then sort
+    let mut result: Vec<PredecessorJob> = predecessor_names
         .into_iter()
-        .filter_map(|(name, durations)| {
-            if durations.len() > threshold {
-                #[allow(clippy::cast_precision_loss)]
-                let avg_duration = durations.iter().sum::<f64>() / durations.len() as f64;
-                Some(PredecessorJob { name, avg_duration })
-            } else {
-                None
-            }
-        })
+        .filter_map(|name| create_predecessor_job(name, avg_durations))
         .collect();
 
-    // Sort by avg_duration descending (slowest first)
+    // Sort by avg_duration_seconds descending (slowest first)
     result.sort_by(|a, b| {
-        b.avg_duration
-            .partial_cmp(&a.avg_duration)
+        b.avg_duration_seconds
+            .partial_cmp(&a.avg_duration_seconds)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     result
 }
 
+fn create_predecessor_job(
+    name: String,
+    avg_durations: &HashMap<String, f64>,
+) -> Option<PredecessorJob> {
+    avg_durations.get(&name).map(|&avg_duration_seconds| {
+        PredecessorJob {
+            name,
+            avg_duration_seconds,
+        }
+    })
+}
+
 fn calculate_flakiness(
     pipelines: &[&GitLabPipeline],
 ) -> (HashMap<String, usize>, HashMap<String, FlakinessMetrics>) {
-    let mut flaky_retriess: HashMap<String, usize> = HashMap::new();
-    let mut execution_counts: HashMap<String, usize> = HashMap::new();
+    // Fold all pipelines into execution and retry counts
+    let (execution_counts, flaky_retries) = pipelines
+        .iter()
+        .fold(
+            (HashMap::new(), HashMap::new()),
+            |(mut exec_counts, mut retry_counts), pipeline| {
+                process_pipeline_flakiness(pipeline, &mut exec_counts, &mut retry_counts);
+                (exec_counts, retry_counts)
+            },
+        );
 
-    for pipeline in pipelines {
-        // Group jobs by name (a job may appear multiple times if retried)
-        let jobs_by_name = group_jobs_by_name(&pipeline.jobs);
-
-        for (name, jobs) in jobs_by_name {
-            // Count total executions for this job in this pipeline
-            let execution_count = jobs.len();
-            *execution_counts.entry(name.to_string()).or_insert(0) += execution_count;
-
-            // Only count retries if the job eventually succeeded in this pipeline
-            if is_job_flaky(&jobs) {
-                // Count retry attempts (jobs with retried: true)
-                let retries = jobs.iter().filter(|j| j.retried).count();
-                *flaky_retriess.entry(name.to_string()).or_insert(0) += retries;
-            }
-        }
-    }
-
-    // Calculate flakiness scores for jobs with retries
-    let flaky_data = flaky_retriess
-        .into_iter()
-        .filter_map(|(name, flaky_retries)| {
-            let total_executions = *execution_counts.get(&name)?;
-
-            // Only include jobs that had at least one retry
-            if flaky_retries == 0 {
-                return None;
-            }
-
-            #[allow(clippy::cast_precision_loss)]
-            let score = (flaky_retries as f64 / total_executions as f64) * 100.0;
-
-            Some((
-                name,
-                FlakinessMetrics {
-                    score,
-                    flaky_retries,
-                },
-            ))
-        })
-        .collect();
+    // Calculate flakiness scores from retry counts
+    let flaky_data = compute_flakiness_scores(&flaky_retries, &execution_counts);
 
     (execution_counts, flaky_data)
 }
 
-fn group_jobs_by_name(jobs: &[GitLabJob]) -> HashMap<&str, Vec<&GitLabJob>> {
-    let mut grouped = HashMap::new();
+fn process_pipeline_flakiness(
+    pipeline: &GitLabPipeline,
+    exec_counts: &mut HashMap<String, usize>,
+    retry_counts: &mut HashMap<String, usize>,
+) {
+    // Group jobs by name and process each group
+    let jobs_by_name = group_jobs_by_name(&pipeline.jobs);
 
-    for job in jobs {
+    for (name, jobs) in jobs_by_name {
+        // Count total executions
+        *exec_counts.entry(name.to_string()).or_insert(0) += jobs.len();
+
+        // Count retries if job is flaky
+        if is_job_flaky(&jobs) {
+            let retries = count_retries(&jobs);
+            *retry_counts.entry(name.to_string()).or_insert(0) += retries;
+        }
+    }
+}
+
+fn count_retries(jobs: &[&GitLabJob]) -> usize {
+    jobs.iter().filter(|j| j.retried).count()
+}
+
+fn compute_flakiness_scores(
+    retry_counts: &HashMap<String, usize>,
+    execution_counts: &HashMap<String, usize>,
+) -> HashMap<String, FlakinessMetrics> {
+    retry_counts
+        .iter()
+        .filter_map(|(name, &flaky_retries)| {
+            create_flakiness_metric(name.clone(), flaky_retries, execution_counts)
+        })
+        .collect()
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn create_flakiness_metric(
+    name: String,
+    flaky_retries: usize,
+    execution_counts: &HashMap<String, usize>,
+) -> Option<(String, FlakinessMetrics)> {
+    if flaky_retries == 0 {
+        return None;
+    }
+
+    let total_executions = *execution_counts.get(&name)?;
+    let score = (flaky_retries as f64 / total_executions as f64) * 100.0;
+
+    Some((
+        name,
+        FlakinessMetrics {
+            score,
+            flaky_retries,
+        },
+    ))
+}
+
+fn group_jobs_by_name(jobs: &[GitLabJob]) -> HashMap<&str, Vec<&GitLabJob>> {
+    jobs.iter().fold(HashMap::new(), |mut grouped, job| {
         grouped
             .entry(job.name.as_str())
             .or_insert_with(Vec::new)
             .push(job);
-    }
-
-    grouped
+        grouped
+    })
 }
 
 fn is_job_flaky(jobs: &[&GitLabJob]) -> bool {

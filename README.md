@@ -90,7 +90,7 @@ The tool outputs detailed insights grouped by pipeline type:
         "successful_pipelines": 2,
         "failed_pipelines": 3,
         "success_rate": 40.0,
-        "average_duration_seconds": 648.5,
+        "avg_duration_seconds": 648.5,
         "jobs": [
           {
             "name": "integration-tests",
@@ -99,11 +99,11 @@ The tool outputs detailed insights grouped by pipeline type:
             "predecessors": [
               {
                 "name": "lint",
-                "avg_duration": 45.0
+                "avg_duration_seconds": 45.0
               },
               {
                 "name": "build",
-                "avg_duration": 180.0
+                "avg_duration_seconds": 180.0
               }
             ],
             "flakiness_score": 0.0,
@@ -117,7 +117,7 @@ The tool outputs detailed insights grouped by pipeline type:
             "predecessors": [
               {
                 "name": "lint",
-                "avg_duration": 45.0
+                "avg_duration_seconds": 45.0
               }
             ],
             "flakiness_score": 0.0,
@@ -150,7 +150,7 @@ The tool outputs detailed insights grouped by pipeline type:
   - **`successful_pipelines`**: Number of successful pipeline runs
   - **`failed_pipelines`**: Number of failed pipeline runs
   - **`success_rate`**: Percentage of successful pipeline runs
-  - **`average_duration_seconds`**: Average pipeline execution time
+  - **`avg_duration_seconds`**: Average pipeline execution time
 - **💼 Job Metrics** (under `metrics.jobs`, sorted by `avg_time_to_feedback_seconds` descending):
   - **`avg_duration_seconds`**: How long the job itself takes to run
   - **`avg_time_to_feedback_seconds`**: Time from pipeline start to job completion (when developers get feedback)
@@ -236,7 +236,7 @@ The following insights would provide additional value for teams analyzing their 
 "stage_breakdown": [
   {
     "name": "test",
-    "avg_duration": 420.0,
+    "avg_duration_seconds": 420.0,
     "failure_rate": 15.5,
     "parallelism": 8,
     "percentage_of_total": 35.0

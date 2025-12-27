@@ -1,33 +1,40 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use super::types::GitLabPipeline;
 use crate::insights::PipelineType;
+
+fn extract_job_signature(pipeline: &GitLabPipeline) -> Vec<String> {
+    pipeline
+        .jobs
+        .iter()
+        .map(|j| j.name.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
 
 pub fn group_pipeline_types(
     pipelines: &[GitLabPipeline],
     min_type_percentage: u8,
 ) -> Vec<PipelineType> {
-    let mut clusters: HashMap<Vec<String>, Vec<&GitLabPipeline>> = HashMap::new();
-
-    // Group pipelines by their job signature
-    for pipeline in pipelines {
-        let mut job_names: Vec<String> = pipeline.jobs.iter().map(|j| j.name.clone()).collect();
-        job_names.sort();
-        job_names.dedup();
-
-        clusters.entry(job_names).or_default().push(pipeline);
-    }
-
     let total_pipelines = pipelines.len();
+
+    let clusters = pipelines.iter().fold(
+        HashMap::new(),
+        |mut acc: HashMap<Vec<String>, Vec<&GitLabPipeline>>, pipeline| {
+            let job_signature = extract_job_signature(pipeline);
+            acc.entry(job_signature).or_default().push(pipeline);
+            acc
+        },
+    );
+
     let mut pipeline_types: Vec<PipelineType> = clusters
         .into_iter()
         .map(|(job_names, cluster_pipelines)| {
             create_pipeline_type(&job_names, &cluster_pipelines, total_pipelines)
         })
+        .filter(|pt| pt.metrics.percentage >= f64::from(min_type_percentage))
         .collect();
-
-    // Filter out pipeline types below threshold
-    pipeline_types.retain(|pt| pt.metrics.percentage >= f64::from(min_type_percentage));
 
     pipeline_types.sort_by(|a, b| b.metrics.total_pipelines.cmp(&a.metrics.total_pipelines));
     pipeline_types
