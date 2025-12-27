@@ -3,6 +3,9 @@ use graphql_client::GraphQLQuery;
 use super::core::GitLabClient;
 use crate::error::{CILensError, Result};
 
+pub type JobID = String;
+pub type CiPipelineID = String;
+
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "src/providers/gitlab/client/schema.json",
@@ -10,8 +13,6 @@ use crate::error::{CILensError, Result};
     response_derives = "Debug,PartialEq,Clone"
 )]
 pub struct FetchPipelines;
-
-pub type CiPipelineID = String;
 
 #[derive(GraphQLQuery)]
 #[graphql(

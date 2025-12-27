@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::types::{GitLabJob, GitLabPipeline};
-use crate::insights::{JobMetrics, PredecessorJob};
+use crate::insights::{JobCountWithLinks, JobMetrics, PredecessorJob};
 
 pub fn calculate_job_metrics(pipeline: &GitLabPipeline) -> Vec<JobMetrics> {
     if pipeline.jobs.is_empty() {
@@ -44,8 +44,14 @@ pub fn calculate_job_metrics(pipeline: &GitLabPipeline) -> Vec<JobMetrics> {
                 avg_time_to_feedback_seconds,
                 predecessors: predecessor_list,
                 flakiness_rate: 0.0,
-                flaky_retries: 0,
-                failed_executions: 0,
+                flaky_retries: JobCountWithLinks {
+                    count: 0,
+                    links: vec![],
+                },
+                failed_executions: JobCountWithLinks {
+                    count: 0,
+                    links: vec![],
+                },
                 failure_rate: 0.0,
                 total_executions: 0,
             }
@@ -66,18 +72,20 @@ fn build_predecessor_list(
     predecessors: &HashMap<&str, &str>,
     job_map: &HashMap<&str, &GitLabJob>,
 ) -> Vec<PredecessorJob> {
-    std::iter::successors(Some(job_name), |&current| predecessors.get(current).copied())
-        .skip(1)
-        .filter_map(|name| {
-            job_map.get(name).map(|job| PredecessorJob {
-                name: name.to_string(),
-                avg_duration_seconds: job.duration,
-            })
+    std::iter::successors(Some(job_name), |&current| {
+        predecessors.get(current).copied()
+    })
+    .skip(1)
+    .filter_map(|name| {
+        job_map.get(name).map(|job| PredecessorJob {
+            name: name.to_string(),
+            avg_duration_seconds: job.duration,
         })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect()
+    })
+    .collect::<Vec<_>>()
+    .into_iter()
+    .rev()
+    .collect()
 }
 
 fn calculate_finish_time<'a>(

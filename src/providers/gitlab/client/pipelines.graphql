@@ -41,6 +41,7 @@ query FetchPipelineJobs(
           endCursor
         }
         nodes {
+          id
           name
           status
           duration

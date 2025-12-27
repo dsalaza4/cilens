@@ -16,6 +16,8 @@ fn extract_job_signature(pipeline: &GitLabPipeline) -> Vec<String> {
 pub fn group_pipeline_types(
     pipelines: &[GitLabPipeline],
     min_type_percentage: u8,
+    base_url: &str,
+    project_path: &str,
 ) -> Vec<PipelineType> {
     let total_pipelines = pipelines.len();
 
@@ -28,7 +30,13 @@ pub fn group_pipeline_types(
     let mut pipeline_types: Vec<PipelineType> = clusters
         .into_iter()
         .map(|(job_names, cluster_pipelines)| {
-            create_pipeline_type(&job_names, &cluster_pipelines, total_pipelines)
+            create_pipeline_type(
+                &job_names,
+                &cluster_pipelines,
+                total_pipelines,
+                base_url,
+                project_path,
+            )
         })
         .filter(|pt| pt.metrics.percentage >= f64::from(min_type_percentage))
         .collect();
@@ -41,6 +49,8 @@ fn create_pipeline_type(
     job_names: &[String],
     pipelines: &[&GitLabPipeline],
     total_pipelines: usize,
+    base_url: &str,
+    project_path: &str,
 ) -> PipelineType {
     let count = pipelines.len();
     #[allow(clippy::cast_precision_loss)]
@@ -64,15 +74,12 @@ fn create_pipeline_type(
     // Extract common characteristics
     let (stages, ref_patterns, sources) = extract_characteristics(pipelines);
 
-    // Collect pipeline IDs
-    let pipeline_ids: Vec<String> = pipelines.iter().map(|p| p.id.clone()).collect();
-
     // Calculate metrics
-    let metrics = super::type_metrics::calculate_type_metrics(pipelines, percentage);
+    let metrics =
+        super::type_metrics::calculate_type_metrics(pipelines, percentage, base_url, project_path);
 
     PipelineType {
         label,
-        pipeline_ids,
         stages,
         ref_patterns,
         sources,

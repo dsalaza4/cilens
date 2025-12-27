@@ -113,6 +113,7 @@ impl GitLabProvider {
             .map(|job_node| {
                 #[allow(clippy::cast_precision_loss)]
                 GitLabJob {
+                    id: job_node.id.unwrap_or_default(),
                     name: job_node.name.unwrap_or_default(),
                     stage: job_node.stage.and_then(|s| s.name).unwrap_or_default(),
                     duration: job_node.duration.unwrap_or(0) as f64,
@@ -152,8 +153,15 @@ impl GitLabProvider {
             warn!("No pipelines found for project: {}", self.project_path);
         }
 
-        let pipeline_types =
-            super::pipeline_types::group_pipeline_types(&pipelines, min_type_percentage);
+        // Extract base URL from graphql_url (e.g., https://gitlab.com/api/graphql -> https://gitlab.com)
+        let base_url = self.client.graphql_url.origin().ascii_serialization();
+
+        let pipeline_types = super::pipeline_types::group_pipeline_types(
+            &pipelines,
+            min_type_percentage,
+            &base_url,
+            &self.project_path,
+        );
 
         Ok(CIInsights {
             provider: "GitLab".to_string(),

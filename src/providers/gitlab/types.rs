@@ -11,6 +11,7 @@ pub struct GitLabPipeline {
 
 #[derive(Debug)]
 pub struct GitLabJob {
+    pub id: String,
     pub name: String,
     pub stage: String,
     pub duration: f64,

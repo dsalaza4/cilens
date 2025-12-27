@@ -18,7 +18,7 @@ A Rust CLI tool for collecting and analyzing CI/CD insights from GitLab.
 Install the latest version for your platform:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dsalaza4/cilens/releases/download/v0.1.0/cilens-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dsalaza4/cilens/releases/download/v0.3.0/cilens-installer.sh | sh
 ```
 
 ### Nix
@@ -80,15 +80,20 @@ The tool outputs detailed insights grouped by pipeline type:
   "pipeline_types": [
     {
       "label": "Test Pipeline",
-      "pipeline_ids": ["gid://gitlab/Ci::Pipeline/123", "gid://gitlab/Ci::Pipeline/124"],
       "stages": ["test"],
       "ref_patterns": ["main"],
       "sources": ["push"],
       "metrics": {
         "percentage": 62.5,
         "total_pipelines": 5,
-        "successful_pipelines": 2,
-        "failed_pipelines": 3,
+        "successful_pipelines": {
+          "count": 2,
+          "links": ["https://gitlab.com/group/project/-/pipelines/123", "https://gitlab.com/group/project/-/pipelines/124"]
+        },
+        "failed_pipelines": {
+          "count": 3,
+          "links": ["https://gitlab.com/group/project/-/pipelines/125", "https://gitlab.com/group/project/-/pipelines/126", "https://gitlab.com/group/project/-/pipelines/127"]
+        },
         "success_rate": 40.0,
         "avg_duration_seconds": 648.5,
         "avg_time_to_feedback_seconds": 45.0,
@@ -108,8 +113,14 @@ The tool outputs detailed insights grouped by pipeline type:
               }
             ],
             "flakiness_rate": 0.0,
-            "flaky_retries": 0,
-            "failed_executions": 0,
+            "flaky_retries": {
+              "count": 0,
+              "links": []
+            },
+            "failed_executions": {
+              "count": 0,
+              "links": []
+            },
             "failure_rate": 0.0,
             "total_executions": 5
           },
@@ -124,8 +135,14 @@ The tool outputs detailed insights grouped by pipeline type:
               }
             ],
             "flakiness_rate": 0.0,
-            "flaky_retries": 0,
-            "failed_executions": 0,
+            "flaky_retries": {
+              "count": 0,
+              "links": []
+            },
+            "failed_executions": {
+              "count": 0,
+              "links": []
+            },
             "failure_rate": 0.0,
             "total_executions": 5
           },
@@ -135,8 +152,14 @@ The tool outputs detailed insights grouped by pipeline type:
             "avg_time_to_feedback_seconds": 45.0,
             "predecessors": [],
             "flakiness_rate": 44.44,
-            "flaky_retries": 4,
-            "failed_executions": 0,
+            "flaky_retries": {
+              "count": 4,
+              "links": ["https://gitlab.com/group/project/-/jobs/501", "https://gitlab.com/group/project/-/jobs/502", "https://gitlab.com/group/project/-/jobs/503", "https://gitlab.com/group/project/-/jobs/504"]
+            },
+            "failed_executions": {
+              "count": 0,
+              "links": []
+            },
             "failure_rate": 0.0,
             "total_executions": 9
           }
@@ -150,12 +173,11 @@ The tool outputs detailed insights grouped by pipeline type:
 ### 📖 Key Metrics Explained
 
 - **🧩 Pipeline Type Clustering**: Groups pipelines by job signature (exact match). Pipeline types below the configured threshold (default 1%) are filtered out to reduce noise.
-- **🔑 Pipeline IDs**: GitLab pipeline IDs for all pipelines in this type (useful for drilling down)
 - **📊 Type Metrics** (under `metrics`):
   - **`percentage`**: Percentage of total pipelines that belong to this type
-  - **`total_pipelines`**: Number of pipelines in this type
-  - **`successful_pipelines`**: Number of successful pipeline runs
-  - **`failed_pipelines`**: Number of failed pipeline runs
+  - **`total_pipelines`**: Total number of pipelines in this type
+  - **`successful_pipelines`**: Object with `count` and `links` - clickable GitLab URLs to investigate successful pipeline runs
+  - **`failed_pipelines`**: Object with `count` and `links` - clickable GitLab URLs to drill down into failed pipeline runs
   - **`success_rate`**: Percentage of successful pipeline runs
   - **`avg_duration_seconds`**: Average pipeline execution time
   - **`avg_time_to_feedback_seconds`**: Average time until first feedback (from the fastest job)
@@ -164,13 +186,13 @@ The tool outputs detailed insights grouped by pipeline type:
   - **`avg_time_to_feedback_seconds`**: Time from pipeline start to job completion (when developers get feedback)
   - **`predecessors`**: Jobs that must complete before this one (on the critical path to this job), with their durations
   - **`flakiness_rate`**: Percentage of job executions that were retries (0.0 if job never needed retries)
-  - **`flaky_retries`**: Total number of retry attempts across all pipelines (only counts retries that eventually succeeded, 0 if never retried)
-  - **`failed_executions`**: Number of times this job failed and stayed failed (did not eventually succeed, 0 if never failed)
+  - **`flaky_retries`**: Object with `count` and `links` - clickable GitLab URLs to investigate specific flaky job runs
+  - **`failed_executions`**: Object with `count` and `links` - clickable GitLab URLs to investigate failed job runs
   - **`failure_rate`**: Percentage of executions that failed and stayed failed (indicates how often the job catches real bugs)
   - **`total_executions`**: Total number of times this job executed across all pipelines, including successful runs, flaky retries, and failures
 - **✅ Success Rate**: Percentage of successful pipeline runs for each type
 
-**Finding optimization targets:** Jobs with the highest `avg_time_to_feedback_seconds` have the worst time-to-feedback and are the best candidates for optimization. Check their `predecessors` to see if you can parallelize or speed up dependencies. Jobs with high `flakiness_rate` indicate intermittent reliability issues that need investigation. Jobs with high `failure_rate` are successfully catching bugs and stopping developers from committing mistakes.
+**Finding optimization targets:** Jobs with the highest `avg_time_to_feedback_seconds` have the worst time-to-feedback and are the best candidates for optimization. Check their `predecessors` to see if you can parallelize or speed up dependencies. Jobs with high `flakiness_rate` indicate intermittent reliability issues - click the `flaky_retries.links` to investigate specific flaky runs in GitLab. Jobs with high `failure_rate` are successfully catching bugs - click the `failed_executions.links` to see which runs failed and analyze the logs.
 
 ## 🔮 Future Work
 
