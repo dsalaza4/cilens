@@ -29,6 +29,9 @@ pub enum CILensError {
     #[error("GitLab API error (status {status}) after {retries} retries. Please wait a few minutes and try again, or reduce --limit.")]
     ApiErrorAfterRetries { status: u16, retries: u32 },
 
+    #[error("GitHub API error: {0}")]
+    GitHubApi(String),
+
     #[error("GraphQL response contained no data")]
     NoResponseData,
 

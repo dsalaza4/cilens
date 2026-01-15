@@ -3,6 +3,7 @@
 /// Wraps a token string with secure handling:
 /// - Debug implementation redacts the value to prevent accidental logging
 /// - Provides safe conversion from string types
+#[derive(Clone)]
 pub struct Token(String);
 
 impl From<&str> for Token {

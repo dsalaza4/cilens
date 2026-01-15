@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use super::job_reliability::{calculate_job_reliability, JobReliabilityMetrics};
@@ -7,40 +6,7 @@ use super::types::GitLabPipeline;
 use crate::insights::{
     JobCountWithLinks, JobMetrics, PipelineCountWithLinks, PredecessorJob, TypeMetrics,
 };
-
-pub(super) fn cmp_f64(a: f64, b: f64) -> Ordering {
-    a.partial_cmp(&b).unwrap_or(Ordering::Equal)
-}
-
-/// Calculate P50, P95, P99 percentiles from a list of values
-/// Returns (p50, p95, p99). If insufficient data, returns same value for all.
-fn calculate_percentiles(values: &[f64]) -> (f64, f64, f64) {
-    if values.is_empty() {
-        return (0.0, 0.0, 0.0);
-    }
-
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| cmp_f64(*a, *b));
-
-    let len = sorted.len();
-
-    // For small datasets, return the same value (best we can do)
-    if len == 1 {
-        let val = sorted[0];
-        return (val, val, val);
-    }
-
-    // Calculate percentile indices using integer arithmetic
-    let p50_idx = (len / 2).min(len - 1);
-    let p95_idx = (len * 95 / 100).min(len - 1);
-    let p99_idx = (len * 99 / 100).min(len - 1);
-
-    let p50 = sorted[p50_idx];
-    let p95 = sorted[p95_idx];
-    let p99 = sorted[p99_idx];
-
-    (p50, p95, p99)
-}
+use crate::providers::utils::{calculate_percentiles, calculate_success_rate, cmp_f64};
 
 /// Calculates comprehensive metrics for a pipeline type.
 ///
@@ -116,11 +82,6 @@ fn to_pipeline_links(
             .map(|p| pipeline_id_to_url(base_url, project_path, &p.id))
             .collect(),
     }
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn calculate_success_rate(successful: usize, total: usize) -> f64 {
-    (successful as f64 / total.max(1) as f64) * 100.0
 }
 
 #[allow(clippy::cast_precision_loss)]
