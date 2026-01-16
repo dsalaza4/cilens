@@ -23,6 +23,7 @@
       [
         "core",
         "ci",
+        "dist",
         "gitlab"
       ]
     ],

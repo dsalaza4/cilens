@@ -76,7 +76,7 @@ Thanks for your interest in contributing! This document provides guidelines to h
    - Follow [Conventional Commits](https://www.conventionalcommits.org/)
    - Format: `type(scope): description`
    - Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `build`, `perf`, `revert`
-   - Scopes: `core`, `ci`, `gitlab`
+   - Scopes: `core`, `ci`, `dist`, `gitlab`
    - The commit template (`.gitmessage`) will guide you with the correct format
    - Examples:
 

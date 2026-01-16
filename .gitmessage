@@ -3,7 +3,7 @@
 # type(scope): subject
 #
 # Types: feat, fix, docs, style, refactor, test, chore, build, perf, revert
-# Scopes: core, ci, gitlab
+# Scopes: core, ci, dist, gitlab
 #
 # Rules:
 # - Scope is mandatory
