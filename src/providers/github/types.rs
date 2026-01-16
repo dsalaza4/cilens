@@ -13,13 +13,14 @@ pub struct GitHubWorkflowRun {
     pub status: String,
     /// Conclusion (success, failure, cancelled, skipped, etc.)
     pub conclusion: Option<String>,
+    /// When the workflow run started (ISO 8601 timestamp)
+    pub run_started_at: Option<String>,
     /// Duration in milliseconds
     pub run_duration_ms: Option<u64>,
     /// All jobs in this workflow run
     pub jobs: Vec<GitHubJob>,
 }
 
-#[allow(dead_code)]
 impl GitHubWorkflowRun {
     /// Returns true if workflow run is completed.
     pub fn is_completed(&self) -> bool {
@@ -56,7 +57,6 @@ pub struct GitHubJob {
     pub needs: Option<Vec<String>>,
 }
 
-#[allow(dead_code)]
 impl GitHubJob {
     /// Calculates job duration in seconds.
     #[allow(clippy::cast_precision_loss)]
@@ -73,9 +73,35 @@ impl GitHubJob {
         }
     }
 
+    /// Calculates time-to-feedback: time from workflow start until this job completes.
+    ///
+    /// # Arguments
+    /// * `workflow_started_at` - When the workflow run started (ISO 8601 timestamp)
+    ///
+    /// # Returns
+    /// Time in seconds from workflow start to job completion, or None if timestamps are missing.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn time_to_feedback(&self, workflow_started_at: Option<&str>) -> Option<f64> {
+        match (workflow_started_at, &self.completed_at) {
+            (Some(workflow_start), Some(job_end)) => {
+                use chrono::{DateTime, Utc};
+                let start: DateTime<Utc> = workflow_start.parse().ok()?;
+                let end: DateTime<Utc> = job_end.parse().ok()?;
+                let duration = end.signed_duration_since(start);
+                Some(duration.num_seconds() as f64)
+            }
+            _ => None,
+        }
+    }
+
     /// Returns true if job succeeded.
     pub fn is_success(&self) -> bool {
         self.conclusion.as_deref() == Some("success")
+    }
+
+    /// Returns true if job failed.
+    pub fn is_failure(&self) -> bool {
+        self.conclusion.as_deref() == Some("failure")
     }
 }
 
@@ -92,12 +118,30 @@ mod tests {
             event: "push".to_string(),
             status: "completed".to_string(),
             conclusion: Some("success".to_string()),
+            run_started_at: Some("2025-01-01T00:00:00Z".to_string()),
             run_duration_ms: Some(60_000),
             jobs: vec![],
         };
         assert!(run.is_completed());
         assert!(run.is_success());
         assert_eq!(run.duration_seconds(), Some(60));
+    }
+
+    #[test]
+    fn test_job_time_to_feedback() {
+        let job = GitHubJob {
+            id: 1,
+            name: "test".to_string(),
+            status: "completed".to_string(),
+            conclusion: Some("success".to_string()),
+            started_at: Some("2025-01-01T00:01:00Z".to_string()), // Started 1 min after workflow
+            completed_at: Some("2025-01-01T00:05:00Z".to_string()), // Completed at 5 min
+            needs: None,
+        };
+        // Duration: 5 - 1 = 4 minutes = 240 seconds
+        assert_eq!(job.duration_seconds(), Some(240.0));
+        // Time-to-feedback from workflow start at 00:00:00 to job completion at 00:05:00 = 5 minutes = 300 seconds
+        assert_eq!(job.time_to_feedback(Some("2025-01-01T00:00:00Z")), Some(300.0));
     }
 
     #[test]

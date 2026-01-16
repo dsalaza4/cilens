@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use super::pipeline_metrics::cmp_f64;
 use super::types::{GitLabJob, GitLabPipeline};
+use crate::providers::utils::cmp_f64;
 use crate::insights::{JobCountWithLinks, JobMetrics, PredecessorJob};
 
 /// Calculates metrics for all jobs in a single pipeline.

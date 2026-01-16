@@ -279,7 +279,7 @@ impl Cli {
 
         let token = config.token.map(|t| Token::from(t.as_str()));
 
-        let provider = GitHubProvider::new(
+        let mut provider = GitHubProvider::new(
             config.base_url,
             config.owner.to_owned(),
             config.repo.to_owned(),

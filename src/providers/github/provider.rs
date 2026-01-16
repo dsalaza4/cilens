@@ -11,12 +11,8 @@ use super::types::{GitHubJob, GitHubWorkflowRun};
 
 /// GitHub Actions CI/CD insights provider.
 pub struct GitHubProvider {
-    #[allow(dead_code)]
-    pub base_url: String,
     pub owner: String,
     pub repo: String,
-    #[allow(dead_code)]
-    pub token: Option<Token>,
     client: GitHubClient,
     cache: JobCache,
 }
@@ -30,15 +26,13 @@ impl GitHubProvider {
         token: Option<Token>,
         use_cache: bool,
     ) -> Result<Self> {
-        let client = GitHubClient::new(base_url, token.clone())?;
+        let client = GitHubClient::new(base_url, token)?;
         let repo_path = format!("{owner}/{repo}");
         let cache = JobCache::new(&repo_path, use_cache)?;
 
         Ok(Self {
-            base_url: base_url.to_string(),
             owner,
             repo,
-            token,
             client,
             cache,
         })
@@ -56,7 +50,7 @@ impl GitHubProvider {
     /// # Errors
     /// Returns an error if fetching workflow runs or jobs fails.
     pub async fn collect_insights(
-        &self,
+        &mut self,
         limit: usize,
         branch: Option<&str>,
         created_after: Option<DateTime<Utc>>,
@@ -73,6 +67,11 @@ impl GitHubProvider {
         // Phase 2: Already have jobs embedded in workflow_runs (fetched in fetch_workflow_runs)
         let progress = progress.finish_phase_1_start_phase_2();
         info!("Fetched jobs for {} workflow runs", workflow_runs.len());
+
+        // Save cache after fetching all workflow runs
+        if let Err(e) = self.cache.save() {
+            log::warn!("Failed to save cache: {e}");
+        }
 
         // Phase 3: Transform to CIInsights by grouping runs by workflow name
         let progress = progress.finish_phase_2_start_phase_3();
@@ -102,7 +101,7 @@ impl GitHubProvider {
     /// # Errors
     /// Returns an error if fetching workflow runs or jobs fails.
     async fn fetch_workflow_runs(
-        &self,
+        &mut self,
         limit: usize,
         branch: Option<&str>,
         created_after: Option<DateTime<Utc>>,
@@ -160,7 +159,11 @@ impl GitHubProvider {
                     })
                     .collect();
 
-                // Note: Cache insertion will be added in Task 8 (cache module integration)
+                // Insert into cache for completed workflow runs
+                if run_data.status == "completed" {
+                    self.cache.insert(run_data.id, jobs.clone());
+                }
+
                 jobs
             };
 
@@ -178,6 +181,7 @@ impl GitHubProvider {
                 event: run_data.event,
                 status: run_data.status,
                 conclusion: run_data.conclusion,
+                run_started_at: run_data.run_started_at,
                 run_duration_ms,
                 jobs,
             };
@@ -232,6 +236,7 @@ mod tests {
             event: "push".to_string(),
             status: "completed".to_string(),
             conclusion: Some("success".to_string()),
+            run_started_at: Some("2025-01-01T00:00:00Z".to_string()),
             run_duration_ms: Some(300_000),
             jobs: vec![],
         };
@@ -245,7 +250,7 @@ mod tests {
     #[tokio::test]
     async fn test_collect_insights_signature() {
         // Test that collect_insights method exists with correct signature
-        let provider = GitHubProvider::new(
+        let mut provider = GitHubProvider::new(
             "https://api.github.com",
             "owner".to_string(),
             "repo".to_string(),

@@ -1,17 +1,27 @@
 use crate::auth::Token;
-use crate::error::Result;
+use crate::error::{CILensError, Result};
+use log::warn;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 use url::Url;
 
-/// GitHub REST API client.
+const MAX_RETRIES: u32 = 30;
+const RETRY_DELAY_SECONDS: u64 = 10;
+const MAX_CONCURRENT_REQUESTS: usize = 500;
+
+/// GitHub REST API client with built-in retry logic and concurrency control.
 ///
-/// Handles HTTP requests to the GitHub API with authentication and retry logic.
+/// Handles HTTP requests to the GitHub API with authentication, rate limiting,
+/// and automatic retries for transient failures.
 pub struct GitHubClient {
     pub base_url: Url,
     pub client: Client,
     pub token: Option<Token>,
+    /// Semaphore to limit concurrent requests
+    semaphore: Arc<Semaphore>,
 }
 
 impl GitHubClient {
@@ -25,29 +35,115 @@ impl GitHubClient {
     /// Returns an error if the base URL is invalid or the HTTP client cannot be created.
     pub fn new(base_url: &str, token: Option<Token>) -> Result<Self> {
         let base_url = Url::parse(base_url)
-            .map_err(|e| crate::error::CILensError::Config(format!("Invalid base URL: {e}")))?;
+            .map_err(|e| CILensError::Config(format!("Invalid base URL: {e}")))?;
 
         let client = Client::builder()
+            .user_agent("CILens/0.1.0")
             .timeout(Duration::from_secs(30))
             .build()
-            .map_err(|e| {
-                crate::error::CILensError::Config(format!("Failed to create HTTP client: {e}"))
-            })?;
+            .map_err(|e| CILensError::Config(format!("Failed to create HTTP client: {e}")))?;
 
         Ok(Self {
             base_url,
             client,
             token,
+            semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
         })
     }
 
-    /// Returns the authorization header value if a token is present.
+    /// Adds authentication header to a request if a token is configured.
+    fn auth_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(token) = &self.token {
+            request.bearer_auth(token.as_str())
+        } else {
+            request
+        }
+    }
+
+    /// Execute a REST API request with automatic retry on network errors and rate limits.
     ///
-    /// Returns `Some("Bearer {token}")` if a token is configured, `None` otherwise.
-    fn auth_header(&self) -> Option<String> {
-        self.token
-            .as_ref()
-            .map(|token| format!("Bearer {}", token.as_str()))
+    /// # Arguments
+    /// * `url` - The URL to request
+    ///
+    /// # Returns
+    /// The parsed JSON response.
+    ///
+    /// # Errors
+    /// Returns an error if the request fails after all retries.
+    async fn execute_request<T>(&self, url: &str) -> Result<T>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        // Acquire semaphore permit to limit concurrent requests
+        let _permit = self.semaphore.acquire().await.unwrap();
+
+        let mut retry_count = 0;
+        loop {
+            let request = self.auth_request(
+                self.client
+                    .get(url)
+                    .header("Accept", "application/vnd.github+json"),
+            );
+
+            let response = match request.send().await {
+                Ok(resp) => resp,
+                Err(e) if e.is_connect() || e.is_timeout() || e.is_request() => {
+                    if retry_count >= MAX_RETRIES {
+                        return Err(e.into());
+                    }
+                    warn!(
+                        "Network error ({}), retrying in {}s ({}/{})...",
+                        e,
+                        RETRY_DELAY_SECONDS,
+                        retry_count + 1,
+                        MAX_RETRIES
+                    );
+                    tokio::time::sleep(Duration::from_secs(RETRY_DELAY_SECONDS)).await;
+                    retry_count += 1;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
+
+            // Check for rate limiting or other HTTP errors
+            let status = response.status();
+
+            if status == 429 || status.is_server_error() {
+                if retry_count >= MAX_RETRIES {
+                    return Err(CILensError::ApiErrorAfterRetries {
+                        status: status.as_u16(),
+                        retries: MAX_RETRIES,
+                    });
+                }
+
+                warn!(
+                    "GitHub API error (status {status}). Waiting {RETRY_DELAY_SECONDS} seconds before retry {}/{}...",
+                    retry_count + 1,
+                    MAX_RETRIES
+                );
+
+                tokio::time::sleep(Duration::from_secs(RETRY_DELAY_SECONDS)).await;
+                retry_count += 1;
+                continue;
+            }
+
+            if !status.is_success() {
+                let error_text = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unable to read error response".to_string());
+                return Err(CILensError::GitHubApi(format!(
+                    "GitHub API error {status}: {error_text}"
+                )));
+            }
+
+            // Parse JSON response
+            let body = response.json().await.map_err(|e| {
+                CILensError::GitHubApi(format!("Failed to parse response: {e}"))
+            })?;
+
+            return Ok(body);
+        }
     }
 
     /// Fetches workflow runs for a repository.
@@ -74,7 +170,7 @@ impl GitHubClient {
         let mut url = self
             .base_url
             .join(&format!("repos/{owner}/{repo}/actions/runs"))
-            .map_err(|e| crate::error::CILensError::Config(format!("Failed to build URL: {e}")))?;
+            .map_err(|e| CILensError::Config(format!("Failed to build URL: {e}")))?;
 
         // Add query parameters
         url.query_pairs_mut()
@@ -92,31 +188,7 @@ impl GitHubClient {
             url.query_pairs_mut().append_pair("created", created);
         }
 
-        let mut request = self
-            .client
-            .get(url.as_str())
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "cilens");
-
-        if let Some(auth) = self.auth_header() {
-            request = request.header("Authorization", auth);
-        }
-
-        let response = request.send().await.map_err(|e| {
-            crate::error::CILensError::GitHubApi(format!("Failed to fetch workflow runs: {e}"))
-        })?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(crate::error::CILensError::GitHubApi(format!(
-                "GitHub API error {status}: {body}"
-            )));
-        }
-
-        let workflow_response: WorkflowRunsResponse = response.json().await.map_err(|e| {
-            crate::error::CILensError::GitHubApi(format!("Failed to parse response: {e}"))
-        })?;
+        let workflow_response: WorkflowRunsResponse = self.execute_request(url.as_str()).await?;
 
         Ok(workflow_response.workflow_runs)
     }
@@ -134,33 +206,9 @@ impl GitHubClient {
         let url = self
             .base_url
             .join(&format!("repos/{owner}/{repo}/actions/runs/{run_id}/jobs"))
-            .map_err(|e| crate::error::CILensError::Config(format!("Failed to build URL: {e}")))?;
+            .map_err(|e| CILensError::Config(format!("Failed to build URL: {e}")))?;
 
-        let mut request = self
-            .client
-            .get(url.as_str())
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "cilens");
-
-        if let Some(auth) = self.auth_header() {
-            request = request.header("Authorization", auth);
-        }
-
-        let response = request.send().await.map_err(|e| {
-            crate::error::CILensError::GitHubApi(format!("Failed to fetch jobs: {e}"))
-        })?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(crate::error::CILensError::GitHubApi(format!(
-                "GitHub API error {status}: {body}"
-            )));
-        }
-
-        let jobs_response: JobsResponse = response.json().await.map_err(|e| {
-            crate::error::CILensError::GitHubApi(format!("Failed to parse response: {e}"))
-        })?;
+        let jobs_response: JobsResponse = self.execute_request(url.as_str()).await?;
 
         Ok(jobs_response.jobs)
     }
@@ -225,26 +273,6 @@ mod tests {
         let client = result.unwrap();
         assert_eq!(client.base_url.as_str(), "https://api.github.com/");
         assert!(client.token.is_some());
-    }
-
-    #[test]
-    fn test_auth_header_without_token() {
-        let client = GitHubClient::new("https://api.github.com", None).unwrap();
-
-        let header = client.auth_header();
-
-        assert!(header.is_none());
-    }
-
-    #[test]
-    fn test_auth_header_with_token() {
-        let token = Token::from("ghp_test");
-        let client = GitHubClient::new("https://api.github.com", Some(token)).unwrap();
-
-        let header = client.auth_header();
-
-        assert!(header.is_some());
-        assert_eq!(header.unwrap(), "Bearer ghp_test");
     }
 
     #[tokio::test]
