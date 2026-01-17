@@ -23,6 +23,7 @@ pub struct GitHubWorkflowRun {
 
 impl GitHubWorkflowRun {
     /// Returns true if workflow run is completed.
+    #[allow(dead_code)]
     pub fn is_completed(&self) -> bool {
         self.status == "completed"
     }
@@ -33,6 +34,7 @@ impl GitHubWorkflowRun {
     }
 
     /// Returns duration in seconds (converts from milliseconds).
+    #[allow(dead_code)]
     pub fn duration_seconds(&self) -> Option<usize> {
         self.run_duration_ms.map(|ms| (ms / 1000) as usize)
     }

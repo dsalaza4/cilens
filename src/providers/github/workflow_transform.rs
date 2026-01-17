@@ -101,6 +101,7 @@ mod tests {
             event: event.to_string(),
             status: "completed".to_string(),
             conclusion: Some("success".to_string()),
+            run_started_at: Some("2025-01-01T00:00:00Z".to_string()),
             run_duration_ms: Some(300_000),
             jobs: vec![],
         }
