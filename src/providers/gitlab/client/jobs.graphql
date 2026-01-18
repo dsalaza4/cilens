@@ -1,0 +1,24 @@
+query FetchJobs($projectPath: ID!, $first: Int!, $after: String) {
+  project(fullPath: $projectPath) {
+    jobs(statuses: [SUCCESS, FAILED], first: $first, after: $after) {
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+      nodes {
+        id
+        name
+        status
+        duration
+        createdAt
+        finishedAt
+        retried
+        needs {
+          nodes {
+            name
+          }
+        }
+      }
+    }
+  }
+}

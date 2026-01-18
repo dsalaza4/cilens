@@ -1,6 +1,5 @@
 use anyhow::Result;
-use chrono::{DateTime, NaiveDate, Utc};
-use clap::{value_parser, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use log::info;
 
 use crate::auth::Token;
@@ -22,35 +21,18 @@ pub struct Cli {
         short,
         long,
         global = true,
-        default_value_t = false,
-        help = "Output JSON instead of human-readable summary"
+        conflicts_with = "json_pretty",
+        help = "Output compact JSON instead of human-readable summary"
     )]
     json: bool,
 
     #[arg(
-        short,
         long,
         global = true,
-        default_value_t = false,
-        help = "Pretty-print JSON output (only works with --json)"
+        conflicts_with = "json",
+        help = "Output pretty-printed JSON instead of human-readable summary"
     )]
-    pretty: bool,
-}
-
-/// Configuration for GitLab insights collection.
-///
-/// Encapsulates all parameters needed to fetch and analyze GitLab pipeline data.
-struct GitLabConfig<'a> {
-    token: Option<&'a String>,
-    base_url: &'a str,
-    project_path: &'a str,
-    limit: usize,
-    ref_: Option<&'a str>,
-    since: Option<DateTime<Utc>>,
-    until: Option<DateTime<Utc>>,
-    min_type_percentage: u8,
-    no_cache: bool,
-    clear_cache: bool,
+    json_pretty: bool,
 }
 
 #[derive(Subcommand)]
@@ -74,107 +56,53 @@ enum Commands {
         )]
         base_url: String,
 
-        #[arg(
-            long,
-            default_value_t = 500,
-            help = "Maximum number of pipelines to fetch"
-        )]
+        #[arg(long, default_value_t = 2000, help = "Maximum number of jobs to fetch")]
         limit: usize,
-
-        #[arg(long, name = "ref", help = "Filter pipelines by git ref (branch/tag)")]
-        ref_: Option<String>,
-
-        #[arg(long, help = "Fetch pipelines since this date (YYYY-MM-DD)")]
-        since: Option<NaiveDate>,
-
-        #[arg(long, help = "Fetch pipelines until this date (YYYY-MM-DD)")]
-        until: Option<NaiveDate>,
-
-        #[arg(
-            long,
-            default_value_t = 1,
-            help = "Minimum percentage for pipeline type filtering (0-100)",
-            value_parser = value_parser!(u8).range(0..=100),
-        )]
-        min_type_percentage: u8,
-
-        #[arg(long, help = "Disable job caching (fetch all data fresh)")]
-        no_cache: bool,
 
         #[arg(long, help = "Clear the job cache before running")]
         clear_cache: bool,
+
+        #[arg(
+            long,
+            default_value_t = 0.2,
+            help = "Minimum execution percentage to include a job (e.g., 0.2 means jobs must have at least 0.2% of total executions)"
+        )]
+        min_executions_percentage: f64,
     },
 }
 
 impl Cli {
-    /// Executes GitLab insights collection with the provided configuration.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - GitLab configuration including authentication, project path, and filters
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` on success, or an error if fetching/processing fails.
-    ///
-    /// # Behavior
-    ///
-    /// - If `clear_cache` is true, clears the cache and returns without fetching insights
-    /// - Otherwise, fetches pipelines from GitLab and displays results in the requested format
-    async fn execute_gitlab(&self, config: GitLabConfig<'_>) -> Result<()> {
-        // Handle cache-only operations
-        if config.clear_cache {
-            JobCache::clear_project_cache(config.project_path)?;
+    /// Executes GitLab insights collection.
+    async fn execute_gitlab(
+        &self,
+        project_path: &str,
+        base_url: &str,
+        token: Option<&String>,
+        limit: usize,
+        clear_cache: bool,
+        min_executions_percentage: f64,
+    ) -> Result<()> {
+        if clear_cache {
+            JobCache::clear(project_path)?;
             info!("Cache cleared successfully");
             return Ok(());
         }
 
-        let token = config.token.map(|t| Token::from(t.as_str()));
+        let token = token.map(|t| Token::from(t.as_str()));
+        let provider = GitLabProvider::new(base_url, project_path, token)?;
 
-        let provider = GitLabProvider::new(
-            config.base_url,
-            config.project_path.to_owned(),
-            token,
-            !config.no_cache,
-        )?;
-
-        // Normal insights collection
-        info!(
-            "Collecting GitLab insights for project: {}",
-            config.project_path
-        );
-        if config.since.is_some() || config.until.is_some() {
-            info!(
-                "Date range: {} to {}",
-                config
-                    .since
-                    .map_or_else(|| "beginning".to_string(), |d| d.date_naive().to_string()),
-                config
-                    .until
-                    .map_or_else(|| "now".to_string(), |d| d.date_naive().to_string())
-            );
-        }
-
+        info!("Collecting GitLab insights for project: {project_path}");
         let insights = provider
-            .collect_insights(
-                config.limit,
-                config.ref_,
-                config.since,
-                config.until,
-                config.min_type_percentage,
-            )
+            .collect_insights(limit, min_executions_percentage)
             .await?;
 
-        if self.json {
-            // JSON output mode
-            let json_output = if self.pretty {
-                serde_json::to_string_pretty(&insights)?
-            } else {
-                serde_json::to_string(&insights)?
-            };
+        if self.json_pretty {
+            let json_output = serde_json::to_string_pretty(&insights)?;
+            println!("{json_output}");
+        } else if self.json {
+            let json_output = serde_json::to_string(&insights)?;
             println!("{json_output}");
         } else {
-            // Summary output mode (default)
             crate::output::print_summary(&insights);
         }
 
@@ -182,48 +110,25 @@ impl Cli {
     }
 
     /// Executes the CLI command.
-    ///
-    /// Parses the subcommand and routes to the appropriate handler.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` on successful execution, or an error if the command fails.
     pub async fn execute(&self) -> Result<()> {
         match &self.command {
             Commands::Gitlab {
-                token,
-                base_url,
                 project_path,
+                base_url,
+                token,
                 limit,
-                ref_,
-                since,
-                until,
-                min_type_percentage,
-                no_cache,
                 clear_cache,
+                min_executions_percentage,
             } => {
-                // Convert NaiveDate to DateTime<Utc> (start of day UTC)
-                let since_datetime =
-                    since.map(|date| date.and_hms_opt(0, 0, 0).expect("Valid time").and_utc());
-
-                // For until, use end of day (23:59:59) to be inclusive
-                let until_datetime =
-                    until.map(|date| date.and_hms_opt(23, 59, 59).expect("Valid time").and_utc());
-
-                let config = GitLabConfig {
-                    token: token.as_ref(),
-                    base_url,
+                self.execute_gitlab(
                     project_path,
-                    limit: *limit,
-                    ref_: ref_.as_deref(),
-                    since: since_datetime,
-                    until: until_datetime,
-                    min_type_percentage: *min_type_percentage,
-                    no_cache: *no_cache,
-                    clear_cache: *clear_cache,
-                };
-
-                self.execute_gitlab(config).await
+                    base_url,
+                    token.as_ref(),
+                    *limit,
+                    *clear_cache,
+                    *min_executions_percentage,
+                )
+                .await
             }
         }
     }
