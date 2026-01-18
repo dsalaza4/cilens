@@ -1,4 +1,4 @@
 mod core;
-pub mod pipelines;
+pub mod jobs;
 
 pub use core::GitLabClient;

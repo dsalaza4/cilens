@@ -2,153 +2,92 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use log::{debug, info, warn};
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 
-use super::types::{GitLabJob, GitLabPipeline};
+use super::types::GitLabJob;
 
-/// Cached pipeline data.
+/// Cached job data.
+///
+/// Jobs are stored in a `HashMap` with job ID as key for efficient lookups and deduplication.
+/// Jobs with SUCCESS or FAILED status are immutable and can be cached indefinitely.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CachedPipeline {
-    /// Cached job data
-    jobs: Vec<GitLabJob>,
-}
-
-/// Job cache for GitLab pipelines.
-///
-/// Caches job data for completed pipelines to avoid redundant API calls.
-/// Uses per-project cache files in platform-specific cache directories:
-/// - Linux: `~/.cache/cilens/gitlab/{project-slug}.json`
-/// - macOS: `~/Library/Caches/cilens/gitlab/{project-slug}.json`
-///
-/// Cache is loaded into memory at startup and immutable - new cache is derived from final pipeline data.
 pub struct JobCache {
-    cache_file: PathBuf,
-    pipelines: HashMap<String, CachedPipeline>,
-    enabled: bool,
+    /// All cached jobs for the project, indexed by job ID
+    pub jobs: HashMap<String, GitLabJob>,
 }
 
 impl JobCache {
-    /// Creates a new job cache instance.
-    ///
-    /// Loads existing cache from disk if available. All cache data is kept in memory
-    /// for fast lookups.
+    /// Creates a new job cache.
+    pub fn new(jobs: HashMap<String, GitLabJob>) -> Self {
+        Self { jobs }
+    }
+
+    /// Loads cache from disk for a specific project.
     ///
     /// # Arguments
     ///
     /// * `project_path` - GitLab project path (e.g., "group/project")
-    /// * `enabled` - Whether caching is enabled
     ///
     /// # Returns
     ///
-    /// Configured cache instance, or error if cache directory cannot be created.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if cache directory cannot be determined or created.
-    pub fn new(project_path: &str, enabled: bool) -> Result<Self> {
-        if !enabled {
-            debug!("Job cache disabled");
-            return Ok(Self {
-                cache_file: PathBuf::new(),
-                pipelines: HashMap::new(),
-                enabled: false,
-            });
-        }
-
-        // Use platform-specific cache directory
-        let cache_dir = dirs::cache_dir()
-            .ok_or_else(|| crate::error::CILensError::Cache("No cache directory found".into()))?
-            .join("cilens")
-            .join("gitlab");
-
-        fs::create_dir_all(&cache_dir)?;
-
-        // Generate cache filename from project path (e.g., "group/project" → "group-project.json")
-        let cache_filename = project_path.replace('/', "-") + ".json";
-        let cache_file = cache_dir.join(cache_filename);
-
-        // Load existing cache from disk (immutable after loading)
-        let pipelines = if cache_file.exists() {
-            fs::read_to_string(&cache_file)
-                .ok()
-                .and_then(|content| serde_json::from_str(&content).ok())
-                .inspect(|_| debug!("Loaded cache from: {}", cache_file.display()))
-                .unwrap_or_else(|| {
-                    warn!("Failed to load cache, starting with empty cache");
-                    HashMap::new()
-                })
-        } else {
-            HashMap::new()
-        };
-
-        info!("Job cache enabled at: {}", cache_file.display());
-
-        Ok(Self {
-            cache_file,
-            pipelines,
-            enabled: true,
-        })
+    /// Cached data if file exists and is valid, `None` otherwise
+    pub fn load(project_path: &str) -> Option<Self> {
+        Self::load_with_base(project_path, None)
     }
 
-    /// Attempts to retrieve cached jobs for a pipeline.
-    ///
-    /// Performs in-memory lookup for fast access. Cache is immutable after loading.
-    ///
-    /// Returns `None` if:
-    /// - Caching is disabled
-    /// - No cache entry exists
-    ///
-    /// # Arguments
-    ///
-    /// * `pipeline_id` - Pipeline GID (unique and immutable)
-    pub fn get(&self, pipeline_id: &str) -> Option<Vec<GitLabJob>> {
-        if !self.enabled {
+    /// Loads cache from disk with an optional base directory (used for testing).
+    fn load_with_base(project_path: &str, base_dir: Option<PathBuf>) -> Option<Self> {
+        let cache_file = Self::get_cache_file_path_with_base(project_path, base_dir).ok()?;
+
+        if !cache_file.exists() {
+            debug!("No cache file found for project: {project_path}");
             return None;
         }
 
-        self.pipelines.get(pipeline_id).map(|cached| {
-            debug!("Cache hit for pipeline {pipeline_id}");
-            cached.jobs.clone()
-        })
+        let content = fs::read_to_string(&cache_file).ok()?;
+        let cache: Self = serde_json::from_str(&content).ok()?;
+
+        debug!(
+            "Loaded cache from: {} ({} jobs)",
+            cache_file.display(),
+            cache.jobs.len()
+        );
+
+        Some(cache)
     }
 
-    /// Derives cache from fetched pipelines and saves to disk.
-    ///
-    /// Transforms the pipeline data into cache format and persists it.
-    /// Client already filters to only completed pipelines (success/failed).
+    /// Saves cache to disk for a specific project.
     ///
     /// # Arguments
     ///
-    /// * `pipelines` - Fetched pipeline data to cache
-    pub fn save_pipelines(&self, pipelines: &[GitLabPipeline]) -> Result<()> {
-        if !self.enabled {
-            return Ok(());
+    /// * `project_path` - GitLab project path (e.g., "group/project")
+    ///
+    /// # Errors
+    ///
+    /// Returns error if cache directory cannot be created or file cannot be written
+    pub fn save(&self, project_path: &str) -> Result<()> {
+        self.save_with_base(project_path, None)
+    }
+
+    /// Saves cache to disk with an optional base directory (used for testing).
+    fn save_with_base(&self, project_path: &str, base_dir: Option<PathBuf>) -> Result<()> {
+        let cache_file = Self::get_cache_file_path_with_base(project_path, base_dir)?;
+
+        // Ensure parent directory exists
+        if let Some(parent) = cache_file.parent() {
+            fs::create_dir_all(parent)?;
         }
 
-        // Derive cache from pipeline data - keyed by pipeline ID only
-        let cache: HashMap<String, CachedPipeline> = pipelines
-            .iter()
-            .map(|pipeline| {
-                (
-                    pipeline.id.clone(),
-                    CachedPipeline {
-                        jobs: pipeline.jobs.clone(),
-                    },
-                )
-            })
-            .collect();
+        let content = serde_json::to_string(self)?;
+        fs::write(&cache_file, content)?;
 
-        // Write to disk
-        let content = serde_json::to_string(&cache)?;
-        fs::write(&self.cache_file, content)?;
-
-        debug!(
-            "Saved {} pipelines to cache: {}",
-            cache.len(),
-            self.cache_file.display()
+        info!(
+            "Saved cache to: {} ({} jobs)",
+            cache_file.display(),
+            self.jobs.len()
         );
 
         Ok(())
@@ -165,14 +104,13 @@ impl JobCache {
     /// # Errors
     ///
     /// Returns an error if cache file cannot be removed.
-    pub fn clear_project_cache(project_path: &str) -> Result<()> {
-        let cache_dir = dirs::cache_dir()
-            .ok_or_else(|| crate::error::CILensError::Cache("No cache directory found".into()))?
-            .join("cilens")
-            .join("gitlab");
+    pub fn clear(project_path: &str) -> Result<()> {
+        Self::clear_with_base(project_path, None)
+    }
 
-        let cache_filename = project_path.replace('/', "-") + ".json";
-        let cache_file = cache_dir.join(cache_filename);
+    /// Clears cache with an optional base directory (used for testing).
+    fn clear_with_base(project_path: &str, base_dir: Option<PathBuf>) -> Result<()> {
+        let cache_file = Self::get_cache_file_path_with_base(project_path, base_dir)?;
 
         if cache_file.exists() {
             fs::remove_file(&cache_file)?;
@@ -183,217 +121,147 @@ impl JobCache {
 
         Ok(())
     }
+
+    /// Gets the cache file path with an optional base directory.
+    ///
+    /// Cache location: `<cache_dir>/cilens/gitlab/<group>-<project>.json`
+    /// (or platform equivalent)
+    ///
+    /// # Arguments
+    ///
+    /// * `project_path` - GitLab project path (e.g., "group/project")
+    /// * `base_dir` - Optional base cache directory (uses platform-specific if `None`)
+    fn get_cache_file_path_with_base(
+        project_path: &str,
+        base_dir: Option<PathBuf>,
+    ) -> Result<PathBuf> {
+        let cache_base = if let Some(base) = base_dir {
+            base
+        } else {
+            dirs::cache_dir().ok_or_else(|| {
+                crate::error::CILensError::Cache("No cache directory found".into())
+            })?
+        };
+
+        let cache_dir = cache_base
+            .join("cilens")
+            .join("gitlab")
+            .join(format!("{}.json", project_path.replace('/', "-")));
+
+        Ok(cache_dir)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use chrono::Utc;
     use tempfile::TempDir;
 
     fn create_test_job(id: &str, name: &str) -> GitLabJob {
         GitLabJob {
             id: id.to_string(),
             name: name.to_string(),
-            stage: "test".to_string(),
             duration: 10.0,
             status: "SUCCESS".to_string(),
             retried: false,
-            needs: None,
+            needs: vec![],
+            created_at: Utc::now(),
+            finished_at: Utc::now(),
         }
-    }
-
-    fn create_test_pipeline(id: &str, status: &str, jobs: Vec<GitLabJob>) -> GitLabPipeline {
-        GitLabPipeline {
-            id: id.to_string(),
-            ref_: "main".to_string(),
-            source: "push".to_string(),
-            status: status.to_string(),
-            duration: 100,
-            jobs,
-            stages: vec![],
-        }
-    }
-
-    #[test]
-    fn test_cache_disabled() {
-        let cache = JobCache::new("group/project", false).unwrap();
-        assert!(!cache.enabled);
-
-        // Cache should not be used when disabled
-        let retrieved = cache.get("pipeline-1");
-        assert!(retrieved.is_none());
-
-        // save_pipelines should do nothing when disabled
-        let jobs = vec![create_test_job("1", "test")];
-        let pipelines = vec![create_test_pipeline("pipeline-1", "success", jobs)];
-        let result = cache.save_pipelines(&pipelines);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_cache_caches_all_pipelines() {
-        let temp_dir = TempDir::new().unwrap();
-        let cache = create_cache_with_dir(temp_dir.path(), "group/project");
-
-        let jobs = vec![create_test_job("1", "test")];
-
-        let pipelines = vec![
-            create_test_pipeline("pipeline-3", "success", jobs.clone()),
-            create_test_pipeline("pipeline-4", "failed", jobs),
-        ];
-
-        // Save pipelines
-        cache.save_pipelines(&pipelines).unwrap();
-
-        // Reload cache to verify what was persisted
-        let reloaded_cache = create_cache_with_dir(temp_dir.path(), "group/project");
-
-        // Should cache both pipelines
-        assert!(reloaded_cache.get("pipeline-3").is_some());
-        assert!(reloaded_cache.get("pipeline-4").is_some());
     }
 
     #[test]
     fn test_cache_save_and_load_roundtrip() {
         let temp_dir = TempDir::new().unwrap();
-        let cache = create_cache_with_dir(temp_dir.path(), "group/project");
+        let base_dir = temp_dir.path().to_path_buf();
 
-        let jobs = vec![
-            create_test_job("1", "build"),
-            create_test_job("2", "test"),
-            create_test_job("3", "deploy"),
-        ];
+        let mut jobs = HashMap::new();
+        jobs.insert("1".to_string(), create_test_job("1", "build"));
+        jobs.insert("2".to_string(), create_test_job("2", "test"));
+        jobs.insert("3".to_string(), create_test_job("3", "deploy"));
 
-        let pipelines = vec![create_test_pipeline(
-            "gid://gitlab/Ci::Pipeline/123",
-            "success",
-            jobs,
-        )];
+        let cache = JobCache::new(jobs);
+        let project_path = "group/project";
 
-        // Save pipelines to cache
-        cache.save_pipelines(&pipelines).unwrap();
+        // Save cache
+        cache
+            .save_with_base(project_path, Some(base_dir.clone()))
+            .unwrap();
 
-        // Reload cache from disk
-        let reloaded_cache = create_cache_with_dir(temp_dir.path(), "group/project");
+        // Load cache
+        let loaded = JobCache::load_with_base(project_path, Some(base_dir));
+        assert!(loaded.is_some());
 
-        // Retrieve from reloaded cache
-        let cached_jobs = reloaded_cache.get("gid://gitlab/Ci::Pipeline/123");
-        assert!(cached_jobs.is_some());
-
-        let cached_jobs = cached_jobs.unwrap();
-        assert_eq!(cached_jobs.len(), 3);
-        assert_eq!(cached_jobs[0].name, "build");
-        assert_eq!(cached_jobs[1].name, "test");
-        assert_eq!(cached_jobs[2].name, "deploy");
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.jobs.len(), 3);
+        assert_eq!(loaded.jobs.get("1").unwrap().name, "build");
+        assert_eq!(loaded.jobs.get("2").unwrap().name, "test");
+        assert_eq!(loaded.jobs.get("3").unwrap().name, "deploy");
     }
 
     #[test]
-    fn test_cache_retrieves_by_pipeline_id() {
+    fn test_cache_load_nonexistent() {
         let temp_dir = TempDir::new().unwrap();
-        let cache = create_cache_with_dir(temp_dir.path(), "group/project");
+        let base_dir = temp_dir.path().to_path_buf();
 
-        let jobs = vec![create_test_job("1", "test")];
-
-        let pipelines = vec![create_test_pipeline("pipeline-1", "success", jobs)];
-
-        // Save pipeline
-        cache.save_pipelines(&pipelines).unwrap();
-
-        // Reload cache
-        let reloaded_cache = create_cache_with_dir(temp_dir.path(), "group/project");
-
-        // Should return data when querying by ID (status is irrelevant - pipeline IDs are unique)
-        assert!(reloaded_cache.get("pipeline-1").is_some());
-
-        // Non-existent ID returns None
-        assert!(reloaded_cache.get("pipeline-999").is_none());
+        let loaded = JobCache::load_with_base("nonexistent/project", Some(base_dir));
+        assert!(loaded.is_none());
     }
 
     #[test]
     fn test_cache_clear() {
         let temp_dir = TempDir::new().unwrap();
+        let base_dir = temp_dir.path().to_path_buf();
 
-        // Set up a temporary cache directory
-        std::env::set_var("HOME", temp_dir.path());
+        let mut jobs = HashMap::new();
+        jobs.insert("1".to_string(), create_test_job("1", "test"));
+        let cache = JobCache::new(jobs);
+        let project_path = "group/project";
 
-        let cache = create_cache_with_dir(temp_dir.path(), "group/project");
+        // Save cache
+        cache
+            .save_with_base(project_path, Some(base_dir.clone()))
+            .unwrap();
 
-        let jobs = vec![create_test_job("1", "test")];
+        // Verify it exists
+        let loaded = JobCache::load_with_base(project_path, Some(base_dir.clone()));
+        assert!(loaded.is_some());
 
-        let pipelines = vec![
-            create_test_pipeline("pipeline-1", "success", jobs.clone()),
-            create_test_pipeline("pipeline-2", "failed", jobs),
-        ];
+        // Clear cache
+        JobCache::clear_with_base(project_path, Some(base_dir.clone())).unwrap();
 
-        // Save pipelines to cache
-        cache.save_pipelines(&pipelines).unwrap();
-
-        // Verify cache file exists
-        let cache_file = cache.cache_file.clone();
-        assert!(cache_file.exists());
-
-        // Clear cache using static method (requires proper cache dir setup)
-        // For this test, we'll manually remove the file since we're using a temp dir
-        fs::remove_file(&cache_file).unwrap();
-
-        // Verify cache file is deleted
-        assert!(!cache_file.exists());
+        // Verify it's gone
+        let loaded = JobCache::load_with_base(project_path, Some(base_dir));
+        assert!(loaded.is_none());
     }
 
     #[test]
     fn test_per_project_cache_files() {
         let temp_dir = TempDir::new().unwrap();
+        let base_dir = temp_dir.path().to_path_buf();
 
-        // Create cache for first project
-        let cache1 = create_cache_with_dir(temp_dir.path(), "group/project1");
-        let jobs1 = vec![create_test_job("1", "test1")];
-        let pipelines1 = vec![create_test_pipeline("pipeline-1", "success", jobs1)];
-        cache1.save_pipelines(&pipelines1).unwrap();
+        let mut jobs1 = HashMap::new();
+        jobs1.insert("1".to_string(), create_test_job("1", "test1"));
+        let cache1 = JobCache::new(jobs1);
+        cache1
+            .save_with_base("group/project1", Some(base_dir.clone()))
+            .unwrap();
 
-        // Create cache for second project
-        let cache2 = create_cache_with_dir(temp_dir.path(), "group/project2");
-        let jobs2 = vec![create_test_job("2", "test2")];
-        let pipelines2 = vec![create_test_pipeline("pipeline-2", "success", jobs2)];
-        cache2.save_pipelines(&pipelines2).unwrap();
+        let mut jobs2 = HashMap::new();
+        jobs2.insert("2".to_string(), create_test_job("2", "test2"));
+        let cache2 = JobCache::new(jobs2);
+        cache2
+            .save_with_base("group/project2", Some(base_dir.clone()))
+            .unwrap();
 
-        // Verify both cache files exist with correct names
-        let cache_dir = temp_dir.path().join("cilens").join("gitlab");
-        assert!(cache_dir.join("group-project1.json").exists());
-        assert!(cache_dir.join("group-project2.json").exists());
+        // Verify both caches exist and contain correct data
+        let loaded1 = JobCache::load_with_base("group/project1", Some(base_dir.clone())).unwrap();
+        assert_eq!(loaded1.jobs.len(), 1);
+        assert_eq!(loaded1.jobs.get("1").unwrap().name, "test1");
 
-        // Verify each cache contains only its own data
-        let reloaded1 = create_cache_with_dir(temp_dir.path(), "group/project1");
-        assert!(reloaded1.get("pipeline-1").is_some());
-        assert!(reloaded1.get("pipeline-2").is_none());
-
-        let reloaded2 = create_cache_with_dir(temp_dir.path(), "group/project2");
-        assert!(reloaded2.get("pipeline-2").is_some());
-        assert!(reloaded2.get("pipeline-1").is_none());
-    }
-
-    // Helper function to create cache with custom directory for testing
-    fn create_cache_with_dir(dir: &std::path::Path, project_path: &str) -> JobCache {
-        let cache_dir = dir.join("cilens").join("gitlab");
-        fs::create_dir_all(&cache_dir).unwrap();
-
-        let cache_filename = project_path.replace('/', "-") + ".json";
-        let cache_file = cache_dir.join(cache_filename);
-
-        // Load existing cache from disk if it exists
-        let pipelines = if cache_file.exists() {
-            fs::read_to_string(&cache_file)
-                .ok()
-                .and_then(|content| serde_json::from_str(&content).ok())
-                .unwrap_or_default()
-        } else {
-            HashMap::new()
-        };
-
-        JobCache {
-            cache_file,
-            pipelines,
-            enabled: true,
-        }
+        let loaded2 = JobCache::load_with_base("group/project2", Some(base_dir)).unwrap();
+        assert_eq!(loaded2.jobs.len(), 1);
+        assert_eq!(loaded2.jobs.get("2").unwrap().name, "test2");
     }
 }

@@ -12,7 +12,7 @@ use crate::error::{CILensError, Result};
 const MAX_RETRIES: u32 = 30;
 const RETRY_DELAY_SECONDS: u64 = 10;
 const MAX_CONCURRENT_REQUESTS: usize = 500;
-pub(super) const PAGE_SIZE: usize = 50;
+pub(super) const PAGE_SIZE: usize = 100;
 
 /// GitLab GraphQL API client with built-in retry logic and concurrency control.
 ///

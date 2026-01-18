@@ -16,9 +16,9 @@ CILens is a CLI tool for collecting and analyzing CI/CD pipeline insights. This 
 
 1. **Percentiles over averages** - P50/P95/P99 give realistic expectations; averages hide outliers
 2. **Time-to-feedback matters** - Developers care about "when will I get results", not just "how long did the job run"
-3. **Detect flakiness automatically** - Track retries and intermittent failures
+3. **Detect retries automatically** - Track retries and intermittent failures
 4. **Optimize the critical path** - Show job dependencies to identify blockers
-5. **Cache aggressively** - Completed pipelines don't change; cache them
+5. **Cache aggressively** - Immutable jobs (SUCCESS/FAILED) don't change; cache them indefinitely
 
 ## Module Structure
 
@@ -30,19 +30,16 @@ cilens/
 ├── insights.rs         # Domain model (CIInsights, JobMetrics, etc.)
 ├── output/             # Display layer
 │   ├── summary.rs      # Human-readable tables
-│   ├── progress.rs     # 3-phase progress spinner
+│   ├── progress.rs     # 2-phase progress spinner
 │   ├── tables.rs       # Color-coded table helpers
 │   └── styling.rs      # Terminal styling functions
 └── providers/
     └── gitlab/
-        ├── provider.rs         # Main entry point
-        ├── client/             # GraphQL API client
-        ├── pipeline_types.rs   # Group pipelines by job signature
-        ├── pipeline_metrics.rs # Calculate P50/P95/P99 for pipeline types
-        ├── job_metrics.rs      # Calculate time-to-feedback per job
-        ├── job_reliability.rs  # Track failures and flakiness
-        ├── cache.rs            # Persistent job cache
-        └── types.rs            # GitLab-specific data models
+        ├── provider.rs  # Main entry point
+        ├── client/      # GraphQL API client
+        ├── jobs.rs      # Job metrics calculation and URL generation
+        ├── cache.rs     # Persistent job cache
+        └── types.rs     # GitLab-specific data models
 ```
 
 ## Data Flow
@@ -51,20 +48,24 @@ cilens/
 1. CLI parses arguments
    └─> GitLabProvider.collect_insights()
 
-2. Fetch pipelines (GraphQL)
+2. Fetch jobs (GraphQL)
    ├─> Check cache for job data
-   ├─> Fetch missing jobs (GraphQL, batched)
+   ├─> Fetch missing jobs (GraphQL, paginated)
+   ├─> Merge cached + fresh jobs
    └─> Save to cache
 
 3. Transform GitLab data → Domain model
-   ├─> Group pipelines by job signature (pipeline_types.rs)
-   ├─> Calculate pipeline metrics (pipeline_metrics.rs)
-   │   └─> Calculate job metrics (job_metrics.rs)
-   │   └─> Calculate reliability (job_reliability.rs)
+   ├─> Aggregate jobs by name (jobs.rs)
+   ├─> Filter jobs below minimum execution threshold
+   ├─> Calculate job metrics (jobs.rs)
+   │   ├─> Duration percentiles (P50/P95/P99)
+   │   ├─> Time-to-feedback percentiles (P50/P95/P99)
+   │   ├─> Extract predecessor dependencies
+   │   └─> Calculate reliability (retry rate, failure rate, success rate)
    └─> Return CIInsights
 
 4. Display results
-   ├─> JSON output (--json)
+   ├─> JSON output (--json or --json-pretty)
    └─> Human-readable summary (output/summary.rs)
 ```
 
@@ -74,44 +75,53 @@ cilens/
 
 **Why:** Averages are misleading for skewed distributions. A job that takes 5min 99% of the time but 60min 1% of the time has a 5.5min average (useless for planning).
 
-**Where:** `pipeline_metrics.rs::calculate_percentiles()`
+**Where:** `jobs.rs::calculate_percentiles()`
 
 ### 2. Time-to-Feedback vs Duration
 
 **Why:** Developers care about "when do I get feedback" more than "how long did the job run". A 2-minute job that waits 10 minutes for dependencies has 12min time-to-feedback.
 
-**Where:** `job_metrics.rs::calculate_finish_time()` - recursively calculates when each job completes based on dependencies.
+**Where:** `jobs.rs::calculate_job_metrics()` - calculates time from pipeline start (`created_at`) to job completion (`finished_at`).
 
-### 3. Job Signature Grouping
+**Important:** Time-to-feedback is calculated only from successful first-try jobs. Retried jobs have `created_at` set to the retry trigger time, not the original pipeline start time, making them unsuitable for this metric.
 
-**Why:** Pipelines with the same set of jobs are the same "type" (e.g., all "Production" pipelines run the same jobs). Group them to get meaningful statistics.
+### 3. Retry Detection
 
-**Where:** `pipeline_types.rs::group_pipeline_types()` - groups by sorted job names, filters by minimum percentage threshold.
+**Why:** Intermittent failures waste CI resources. Jobs with high retry rates need fixing.
 
-### 4. Flakiness Detection
+**Where:** `jobs.rs::calculate_job_reliability()` - tracks retried executions using GitLab's `retried` flag.
 
-**Why:** Intermittent failures waste CI resources. Jobs that fail then succeed on retry are "flaky" and need fixing.
+**Design:**
 
-**Where:** `job_reliability.rs::calculate_job_reliability()` - tracks failed-then-retried vs failed-and-stayed-failed.
+- `retry_rate`: Percentage of executions that were retries
+- `retried_executions`: Count and clickable URLs to investigate
+- Distinguished from `failure_rate` which tracks jobs that failed and stayed failed
 
-### 5. Smart Caching
+### 4. Smart Caching
 
-**Why:** Completed pipelines don't change. Fetching jobs is expensive (1 API call per pipeline). Cache reduces 500 pipelines from ~500 API calls to ~5-10 on subsequent runs.
+**Why:** Completed jobs don't change. Fetching jobs is expensive. Cache eliminates redundant API calls on subsequent runs.
 
 **Where:** `cache.rs` - per-project JSON cache in platform-specific cache directory.
 
 **Design:**
 
-- Cache key: pipeline ID
-- Cache value: job data
-- Immutable: loaded at startup, written on completion
-- Only cache "success" and "failed" (not "running" or "canceled")
+- Cache key: job ID
+- Cache value: complete job data
+- Immutable: SUCCESS and FAILED jobs cached indefinitely
+- Merging: fresh jobs merged with cached jobs, deduplicated by ID
+- Platform-aware: uses OS-specific cache directories
 
-### 6. Deterministic Sampling
+### 5. Noise Filtering
 
-**Why:** When fetching 500 pipelines, we want a balanced sample (not just 500 most recent failures). GitLab API returns most recent first.
+**Why:** Rarely-executed jobs add noise to the analysis. Most insights come from frequently-run jobs.
 
-**Where:** `client/pipelines.rs::fetch_pipelines()` - fetch 50% SUCCESS, 50% FAILED to get representative sample.
+**Where:** `jobs.rs::calculate_job_metrics()` - filters jobs below `min_executions_percentage` (default 0.2%).
+
+**Design:**
+
+- Calculates total executions across all jobs
+- Filters out jobs representing less than threshold percentage
+- Configurable via `--min-executions-percentage` flag
 
 ## Extension Points
 
@@ -148,5 +158,5 @@ cilens/
 
 ## Testing Strategy
 
-- **Unit tests:** Inline with `#[cfg(test)]` (181 tests)
+- **Unit tests:** Inline with `#[cfg(test)]` (100 tests)
 - **Test fixtures:** Helper functions in each test module
