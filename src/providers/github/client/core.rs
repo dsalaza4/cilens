@@ -10,7 +10,7 @@ use crate::error::{CILensError, Result};
 
 const MAX_RETRIES: u32 = 30;
 const RETRY_DELAY_SECONDS: u64 = 10;
-const MAX_CONCURRENT_REQUESTS: usize = 300;
+const MAX_CONCURRENT_REQUESTS: usize = 500;
 const MAX_WAIT_SECONDS: u64 = 300; // 5 minutes - max time to wait for rate limit reset
 const GITHUB_API_VERSION: &str = "2022-11-28";
 pub const PAGE_SIZE: usize = 100;
@@ -18,7 +18,8 @@ pub const PAGE_SIZE: usize = 100;
 /// GitHub REST API client with built-in retry logic and concurrency control.
 ///
 /// Handles authentication, rate limiting, and automatic retries for transient failures.
-/// Limits concurrent requests to 100 to avoid overwhelming the GitHub API.
+/// Limits concurrent requests to `MAX_CONCURRENT_REQUESTS` to avoid overwhelming the GitHub API.
+#[derive(Clone)]
 pub struct GitHubClient {
     /// HTTP client for making requests
     pub client: Client,

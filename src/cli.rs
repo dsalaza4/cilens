@@ -56,7 +56,7 @@ enum Commands {
         )]
         base_url: String,
 
-        #[arg(long, default_value_t = 2000, help = "Maximum number of jobs to fetch")]
+        #[arg(long, default_value_t = 500, help = "Maximum number of jobs to fetch")]
         limit: usize,
 
         #[arg(long, help = "Clear the job cache before running")]
@@ -84,7 +84,7 @@ enum Commands {
         #[arg(long, default_value = "https://github.com", help = "GitHub base URL")]
         base_url: String,
 
-        #[arg(long, default_value_t = 2000, help = "Maximum number of jobs to fetch")]
+        #[arg(long, default_value_t = 500, help = "Maximum number of jobs to fetch")]
         limit: usize,
 
         #[arg(long, help = "Clear the job cache before running")]

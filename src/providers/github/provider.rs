@@ -1,11 +1,12 @@
 use chrono::Utc;
+use futures::stream::{self, StreamExt, TryStreamExt};
 use log::{info, warn};
 
 use crate::auth::Token;
 use crate::error::Result;
 use crate::insights::CIInsights;
 use crate::output::PhaseProgress;
-use crate::providers::github::client::{GitHubClient, Job, WorkflowRun, PAGE_SIZE};
+use crate::providers::github::client::{GitHubClient, Job, WorkflowRun};
 
 use super::cache::JobCache;
 use super::jobs::calculate_job_metrics;
@@ -108,13 +109,13 @@ impl GitHubProvider {
                 info!("Using {} cached jobs (limit: {})", cache.jobs.len(), limit);
                 Self::map_to_sorted_jobs(cache.jobs, limit)
             } else {
+                // Cache has fewer jobs than requested, fetch until we have enough unique jobs
                 info!(
-                    "Cache has {} jobs, fetching {} more to reach limit",
+                    "Cache has {} jobs, need {} total - fetching more...",
                     cache.jobs.len(),
                     limit
                 );
-                let fresh_jobs = self.fetch_jobs_from_api(limit).await?;
-                self.merge_and_cache(cache.jobs, fresh_jobs, limit)
+                self.fetch_and_merge_until_limit(cache.jobs, limit).await?
             }
         } else {
             info!("No cache found, fetching from API");
@@ -149,6 +150,8 @@ impl GitHubProvider {
     /// Fetches jobs from API without caching.
     ///
     /// Orchestrates fetching workflow runs and their jobs from the GitHub API.
+    /// Fetches runs page-by-page, processing each page's jobs concurrently.
+    /// Stops when the job limit is reached to avoid over-fetching runs.
     async fn fetch_jobs_from_api(&self, limit: usize) -> Result<Vec<GitHubJob>> {
         info!("Fetching GitHub Actions jobs (limit: {limit})...");
 
@@ -157,7 +160,8 @@ impl GitHubProvider {
 
         loop {
             info!(
-                "Fetching workflow runs page {page} ({} jobs collected so far)...",
+                "Fetching workflow runs page {} ({} jobs collected so far)...",
+                page,
                 all_jobs.len()
             );
 
@@ -168,34 +172,20 @@ impl GitHubProvider {
                 break;
             }
 
-            // Fetch jobs for each run
-            for run in &runs {
-                if all_jobs.len() >= limit {
-                    info!("Reached job limit of {limit}");
-                    break;
-                }
+            let jobs_from_page = self.fetch_jobs_for_runs(runs).await?;
+            let new_job_count = jobs_from_page.len();
+            all_jobs.extend(jobs_from_page);
 
-                // Calculate remaining jobs needed
-                let remaining = limit.saturating_sub(all_jobs.len());
-                let jobs = self.client.fetch_jobs_for_run(run.id, remaining).await?;
+            info!(
+                "Collected {} jobs from this page ({} total)",
+                new_job_count,
+                all_jobs.len()
+            );
 
-                // Transform API jobs to GitHubJob structs
-                for job in jobs {
-                    if all_jobs.len() >= limit {
-                        break;
-                    }
-
-                    all_jobs.push(Self::transform_job(job, run));
-                }
-            }
-
+            // Stop if we've reached the limit
             if all_jobs.len() >= limit {
-                break;
-            }
-
-            // Check if there are more pages
-            if runs.len() < PAGE_SIZE {
-                info!("No more workflow runs available");
+                info!("Reached job limit of {limit}");
+                all_jobs.truncate(limit);
                 break;
             }
 
@@ -206,13 +196,100 @@ impl GitHubProvider {
         Ok(all_jobs)
     }
 
+    /// Fetches jobs for multiple workflow runs concurrently.
+    ///
+    /// Filters out jobs without required fields (`started_at`).
+    async fn fetch_jobs_for_runs(&self, runs: Vec<WorkflowRun>) -> Result<Vec<GitHubJob>> {
+        stream::iter(runs)
+            .map(|run| {
+                let client = self.client.clone();
+                async move {
+                    // Fetch all jobs for this run
+                    let jobs = client.fetch_jobs_for_run(run.id, usize::MAX).await?;
+
+                    // Transform API jobs to GitHubJob with run context, filtering out invalid jobs
+                    let transformed: Vec<GitHubJob> = jobs
+                        .into_iter()
+                        .filter_map(|job| Self::transform_job(job, &run))
+                        .collect();
+
+                    Ok::<_, crate::error::CILensError>(transformed)
+                }
+            })
+            // buffer_unordered allows high concurrency, but semaphore in client controls actual parallelism
+            .buffer_unordered(1000)
+            .try_collect::<Vec<Vec<GitHubJob>>>()
+            .await
+            .map(|jobs| jobs.into_iter().flatten().collect())
+    }
+
+    /// Fetches jobs and merges with cache until we have enough unique jobs.
+    ///
+    /// Handles deduplication by continuing to fetch until we reach the desired limit
+    /// of unique jobs after merging with the cache.
+    async fn fetch_and_merge_until_limit(
+        &self,
+        mut cached_jobs: std::collections::HashMap<u64, GitHubJob>,
+        limit: usize,
+    ) -> Result<Vec<GitHubJob>> {
+        let mut page = 1;
+        let initial_cache_size = cached_jobs.len();
+
+        loop {
+            let unique_count = cached_jobs.len();
+
+            // Check if we have enough unique jobs
+            if unique_count >= limit {
+                info!(
+                    "Reached {} unique jobs ({} from cache, {} new)",
+                    unique_count,
+                    initial_cache_size,
+                    unique_count - initial_cache_size
+                );
+                break;
+            }
+
+            info!("Have {unique_count} unique jobs, need {limit} - fetching more (page {page})...");
+
+            // Fetch next page of runs
+            let runs = self.client.fetch_runs(page).await?;
+
+            if runs.is_empty() {
+                info!("No more workflow runs available. Collected {unique_count} unique jobs (requested {limit})");
+                break;
+            }
+
+            let jobs_from_page = self.fetch_jobs_for_runs(runs).await?;
+
+            // Merge into cache (deduplicates by job ID)
+            let before_merge = cached_jobs.len();
+            for job in jobs_from_page {
+                cached_jobs.insert(job.id, job);
+            }
+            let after_merge = cached_jobs.len();
+            let new_unique = after_merge - before_merge;
+
+            info!("Page {page} added {new_unique} new unique jobs ({after_merge} total unique)");
+
+            page += 1;
+        }
+
+        let result = Self::map_to_sorted_jobs(cached_jobs, limit);
+        self.save_cache(&result);
+        Ok(result)
+    }
+
     /// Transforms a raw API job and run into a `GitHubJob`.
-    fn transform_job(job: Job, run: &WorkflowRun) -> GitHubJob {
+    ///
+    /// Returns `None` if the job is missing required fields (`started_at`).
+    fn transform_job(job: Job, run: &WorkflowRun) -> Option<GitHubJob> {
+        // Filter out jobs without started_at timestamp
+        let started_at = job.started_at?;
+
         // Calculate duration if job is completed
         #[allow(clippy::cast_precision_loss)]
-        let duration = if let (Some(started), Some(completed)) = (job.started_at, job.completed_at)
-        {
-            (completed - started).num_seconds() as f64
+        let duration = if let Some(completed) = job.completed_at {
+            (completed - started_at).num_seconds() as f64
         } else {
             0.0
         };
@@ -224,7 +301,7 @@ impl GitHubProvider {
             .or_else(|| run.path.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
-        GitHubJob {
+        Some(GitHubJob {
             id: job.id,
             run_id: job.run_id,
             name: job.name,
@@ -233,29 +310,11 @@ impl GitHubProvider {
             conclusion: job.conclusion,
             run_attempt: job.run_attempt, // Job inherits workflow run's attempt
             duration,
-            started_at: job.started_at.unwrap_or_else(chrono::Utc::now),
+            started_at,
             completed_at: job.completed_at,
             workflow_run_started_at: run.run_started_at,
             html_url: job.html_url,
-        }
-    }
-
-    /// Merges cached jobs with fresh jobs, deduplicates, sorts, limits, and saves to cache.
-    fn merge_and_cache(
-        &self,
-        mut cached_jobs: std::collections::HashMap<u64, GitHubJob>,
-        fresh_jobs: Vec<GitHubJob>,
-        limit: usize,
-    ) -> Vec<GitHubJob> {
-        // Merge fresh jobs into cache (overwrites duplicates)
-        for job in fresh_jobs {
-            cached_jobs.insert(job.id, job);
-        }
-
-        info!("Merged {} unique jobs", cached_jobs.len());
-        let result = Self::map_to_sorted_jobs(cached_jobs, limit);
-        self.save_cache(&result);
-        result
+        })
     }
 }
 
@@ -290,7 +349,7 @@ mod tests {
             html_url: "https://github.com/owner/repo/actions/runs/123/jobs/456".to_string(),
         };
 
-        let github_job = GitHubProvider::transform_job(job, &run);
+        let github_job = GitHubProvider::transform_job(job, &run).unwrap();
 
         assert_eq!(github_job.id, 456);
         assert_eq!(github_job.run_id, 123);
@@ -340,7 +399,7 @@ mod tests {
             html_url: "https://github.com/owner/repo/actions/runs/123/jobs/456".to_string(),
         };
 
-        let github_job = GitHubProvider::transform_job(job, &run);
+        let github_job = GitHubProvider::transform_job(job, &run).unwrap();
         assert_eq!(github_job.workflow_name, "CI Pipeline");
     }
 
@@ -366,7 +425,7 @@ mod tests {
             html_url: "https://github.com/owner/repo/actions/runs/123/jobs/456".to_string(),
         };
 
-        let github_job = GitHubProvider::transform_job(job, &run);
+        let github_job = GitHubProvider::transform_job(job, &run).unwrap();
         assert_eq!(github_job.workflow_name, ".github/workflows/ci.yml");
     }
 
@@ -392,7 +451,7 @@ mod tests {
             html_url: "https://github.com/owner/repo/actions/runs/123/jobs/456".to_string(),
         };
 
-        let github_job = GitHubProvider::transform_job(job, &run);
+        let github_job = GitHubProvider::transform_job(job, &run).unwrap();
         assert_eq!(github_job.workflow_name, "unknown");
     }
 
@@ -418,7 +477,7 @@ mod tests {
             html_url: "https://github.com/owner/repo/actions/runs/123/jobs/456".to_string(),
         };
 
-        let github_job = GitHubProvider::transform_job(job, &run);
+        let github_job = GitHubProvider::transform_job(job, &run).unwrap();
 
         assert_eq!(github_job.status, "in_progress");
         assert_eq!(github_job.duration, 0.0); // No duration if not completed

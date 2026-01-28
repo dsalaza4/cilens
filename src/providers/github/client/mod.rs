@@ -1,5 +1,5 @@
 mod core;
 mod jobs;
 
-pub use core::{GitHubClient, PAGE_SIZE};
+pub use core::GitHubClient;
 pub use jobs::{Job, WorkflowRun};

@@ -53,7 +53,7 @@ Rarely-executed jobs add noise. By default, jobs representing less than 0.2% of 
 |---------|----------------|--------|
 | **API** | REST (two-phase: runs → jobs) | GraphQL (single query) |
 | **Pagination** | 100 per page | 50 per page |
-| **Concurrency** | 300 requests | 500 requests |
+| **Fetching Strategy** | Concurrent (up to 500 requests) | Sequential (cursor-based, 50 jobs per page) |
 | **Retry Detection** | `run_attempt > 1` | `retried` flag |
 | **Predecessors** | N/A (needs YAML parsing) | `needs` keyword |
 | **Time-to-Feedback** | From `workflow_run.run_started_at` | From `pipeline.created_at` |

@@ -1,9 +1,7 @@
 use graphql_client::Response as GraphQLResponse;
 use log::warn;
 use reqwest::Client;
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Semaphore;
 use url::Url;
 
 use crate::auth::Token;
@@ -11,13 +9,12 @@ use crate::error::{CILensError, Result};
 
 const MAX_RETRIES: u32 = 30;
 const RETRY_DELAY_SECONDS: u64 = 10;
-const MAX_CONCURRENT_REQUESTS: usize = 500;
 pub(super) const PAGE_SIZE: usize = 100;
 
-/// GitLab GraphQL API client with built-in retry logic and concurrency control.
+/// GitLab GraphQL API client with built-in retry logic.
 ///
 /// Handles authentication, rate limiting, and automatic retries for transient failures.
-/// Limits concurrent requests to 500 to avoid overwhelming the GitLab API.
+/// Uses sequential cursor-based pagination (inherent to GraphQL cursor pagination).
 pub struct GitLabClient {
     /// HTTP client for making requests
     pub client: Client,
@@ -25,8 +22,6 @@ pub struct GitLabClient {
     pub graphql_url: Url,
     /// Optional authentication token
     pub token: Option<Token>,
-    /// Semaphore to limit concurrent requests
-    semaphore: Arc<Semaphore>,
 }
 
 impl GitLabClient {
@@ -61,7 +56,6 @@ impl GitLabClient {
             client,
             graphql_url,
             token,
-            semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS)),
         })
     }
 
@@ -91,9 +85,6 @@ impl GitLabClient {
     where
         T: serde::de::DeserializeOwned,
     {
-        // Acquire semaphore permit to limit concurrent requests (one permit per logical request)
-        let _permit = self.semaphore.acquire().await.unwrap();
-
         let mut retry_count = 0;
         loop {
             let request = self.auth_request(

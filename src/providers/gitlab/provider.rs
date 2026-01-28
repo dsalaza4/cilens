@@ -46,16 +46,23 @@ impl GitLabProvider {
     }
 
     /// Transforms job nodes from the GraphQL API into `GitLabJob` types.
+    ///
+    /// Filters out jobs without required fields (id, name, `finished_at`).
     fn transform_job_nodes(job_nodes: Vec<FetchJobsProjectJobsNodes>) -> Vec<GitLabJob> {
         job_nodes
             .into_iter()
-            .map(|node| {
+            .filter_map(|node| {
+                // Only process jobs with all required fields
+                let id = node.id?;
+                let name = node.name?;
+                let finished_at = node.finished_at?; // Filter out non-finished jobs
+
                 #[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
-                GitLabJob {
-                    id: node.id.unwrap_or_default(),
-                    name: node.name.unwrap_or_default(),
+                Some(GitLabJob {
+                    id,
+                    name,
                     duration: node.duration.unwrap_or(0) as f64,
-                    status: node.status.map(|s| format!("{s:?}")).unwrap_or_default(),
+                    status: node.status.map_or_else(|| "UNKNOWN".to_string(), |s| format!("{s:?}")),
                     retried: node.retried.unwrap_or(false),
                     needs: node
                         .needs
@@ -69,8 +76,8 @@ impl GitLabProvider {
                         })
                         .unwrap_or_default(),
                     created_at: node.created_at,
-                    finished_at: node.finished_at.expect("finished_at must be present"),
-                }
+                    finished_at,
+                })
             })
             .collect()
     }
@@ -143,13 +150,13 @@ impl GitLabProvider {
                 info!("Using {} cached jobs (limit: {})", cache.jobs.len(), limit);
                 Self::map_to_sorted_jobs(cache.jobs, limit)
             } else {
+                // Cache has fewer jobs than requested, fetch until we have enough unique jobs
                 info!(
-                    "Cache has {} jobs, fetching {} more to reach limit",
+                    "Cache has {} jobs, need {} total - fetching more...",
                     cache.jobs.len(),
                     limit
                 );
-                let fresh_jobs = self.fetch_jobs_from_api(limit).await?;
-                self.merge_and_cache(cache.jobs, fresh_jobs, limit)
+                self.fetch_and_merge_until_limit(cache.jobs, limit).await?
             }
         } else {
             info!("No cache found, fetching from API");
@@ -193,21 +200,61 @@ impl GitLabProvider {
         Ok(Self::transform_job_nodes(job_nodes))
     }
 
-    /// Merges cached jobs with fresh jobs, deduplicates, sorts, limits, and saves to cache.
-    fn merge_and_cache(
+    /// Fetches jobs and merges with cache until we have enough unique jobs.
+    ///
+    /// Handles deduplication by continuing to fetch until we reach the desired limit
+    /// of unique jobs after merging with the cache.
+    async fn fetch_and_merge_until_limit(
         &self,
         mut cached_jobs: std::collections::HashMap<String, GitLabJob>,
-        fresh_jobs: Vec<GitLabJob>,
         limit: usize,
-    ) -> Vec<GitLabJob> {
-        // Merge fresh jobs into cache (overwrites duplicates)
-        for job in fresh_jobs {
-            cached_jobs.insert(job.id.clone(), job);
+    ) -> Result<Vec<GitLabJob>> {
+        let initial_cache_size = cached_jobs.len();
+
+        // Fetch in batches, keep going until we have enough unique jobs
+        loop {
+            let unique_count = cached_jobs.len();
+
+            // Check if we have enough unique jobs
+            if unique_count >= limit {
+                info!(
+                    "Reached {} unique jobs ({} from cache, {} new)",
+                    unique_count,
+                    initial_cache_size,
+                    unique_count - initial_cache_size
+                );
+                break;
+            }
+
+            info!("Have {unique_count} unique jobs, need {limit} - fetching more...");
+
+            let before_fetch = cached_jobs.len();
+            let fresh_jobs = self.fetch_jobs_from_api(limit - unique_count).await?;
+
+            if fresh_jobs.is_empty() {
+                info!("No more jobs available. Collected {unique_count} unique jobs (requested {limit})");
+                break;
+            }
+
+            // Merge into cache (deduplicates by job ID)
+            for job in fresh_jobs {
+                cached_jobs.insert(job.id.clone(), job);
+            }
+
+            let after_fetch = cached_jobs.len();
+            let new_unique = after_fetch - before_fetch;
+
+            info!("Fetch added {new_unique} new unique jobs ({after_fetch} total unique)");
+
+            // If we didn't get any new unique jobs, we've exhausted the API
+            if new_unique == 0 {
+                info!("No new unique jobs found, stopping fetch");
+                break;
+            }
         }
 
-        info!("Merged {} unique jobs", cached_jobs.len());
         let result = Self::map_to_sorted_jobs(cached_jobs, limit);
         self.save_cache(&result);
-        result
+        Ok(result)
     }
 }

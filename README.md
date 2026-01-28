@@ -83,7 +83,7 @@ cilens github owner/repo --base-url "https://github.example.com"
 cilens github owner/repo --min-executions-percentage 0.5 # More aggressive
 cilens github owner/repo --min-executions-percentage 0   # No filtering
 
-# Fetch more jobs (default: 2000)
+# Fetch more jobs (default: 500)
 cilens github owner/repo --limit 5000
 
 # Clear cached data
@@ -99,7 +99,7 @@ cilens github owner/repo --clear-cache
 CILens is designed to handle large-scale job fetches reliably:
 
 - **Automatic Retry**: Network errors, rate limits (429), and server errors (5xx) are automatically retried up to 30 times with 10-second delays
-- **Concurrency Limiting**: 300 concurrent requests for GitHub Actions, 500 for GitLab
+- **Concurrent Fetching**: GitHub Actions uses up to 500 concurrent requests; GitLab handles concurrency server-side
 - **Pagination**: Automatically handles pagination (100 per page for GitHub, 50 per page for GitLab)
 - **Graceful Degradation**: Transient failures are logged and retried transparently
 
