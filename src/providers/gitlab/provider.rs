@@ -62,7 +62,9 @@ impl GitLabProvider {
                     id,
                     name,
                     duration: node.duration.unwrap_or(0) as f64,
-                    status: node.status.map_or_else(|| "UNKNOWN".to_string(), |s| format!("{s:?}")),
+                    status: node
+                        .status
+                        .map_or_else(|| "UNKNOWN".to_string(), |s| format!("{s:?}")),
                     retried: node.retried.unwrap_or(false),
                     needs: node
                         .needs
