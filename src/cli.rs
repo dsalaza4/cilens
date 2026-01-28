@@ -82,11 +82,7 @@ enum Commands {
         )]
         token: Option<String>,
 
-        #[arg(
-            long,
-            default_value = "https://github.com",
-            help = "GitHub base URL"
-        )]
+        #[arg(long, default_value = "https://github.com", help = "GitHub base URL")]
         base_url: String,
 
         #[arg(long, default_value_t = 2000, help = "Maximum number of jobs to fetch")]

@@ -151,3 +151,136 @@ impl JobCache {
         Ok(cache_dir)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use std::collections::HashMap;
+    use tempfile::TempDir;
+
+    fn create_test_job(id: u64, name: &str) -> GitHubJob {
+        GitHubJob {
+            id,
+            run_id: 1,
+            name: name.to_string(),
+            workflow_name: "test-workflow".to_string(),
+            status: "completed".to_string(),
+            conclusion: Some("success".to_string()),
+            run_attempt: 1,
+            duration: 60.0,
+            started_at: Utc::now(),
+            completed_at: Some(Utc::now()),
+            workflow_run_started_at: Utc::now(),
+            html_url: format!("https://github.com/owner/repo/actions/runs/1/jobs/{id}"),
+        }
+    }
+
+    #[test]
+    fn test_cache_new() {
+        let mut jobs = HashMap::new();
+        jobs.insert(1, create_test_job(1, "build"));
+
+        let cache = JobCache::new(jobs);
+        assert_eq!(cache.jobs.len(), 1);
+        assert_eq!(cache.jobs.get(&1).unwrap().name, "build");
+    }
+
+    #[test]
+    fn test_cache_save_and_load_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_dir = temp_dir.path().to_path_buf();
+
+        let mut jobs = HashMap::new();
+        jobs.insert(1, create_test_job(1, "build"));
+        jobs.insert(2, create_test_job(2, "test"));
+        jobs.insert(3, create_test_job(3, "deploy"));
+
+        let cache = JobCache::new(jobs);
+        let repository = "owner/repo";
+
+        // Save cache
+        cache
+            .save_with_base(repository, Some(base_dir.clone()))
+            .unwrap();
+
+        // Load cache
+        let loaded = JobCache::load_with_base(repository, Some(base_dir));
+        assert!(loaded.is_some());
+
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.jobs.len(), 3);
+        assert_eq!(loaded.jobs.get(&1).unwrap().name, "build");
+        assert_eq!(loaded.jobs.get(&2).unwrap().name, "test");
+        assert_eq!(loaded.jobs.get(&3).unwrap().name, "deploy");
+    }
+
+    #[test]
+    fn test_cache_load_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_dir = temp_dir.path().to_path_buf();
+
+        let loaded = JobCache::load_with_base("owner/nonexistent", Some(base_dir));
+        assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn test_cache_clear_existing() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_dir = temp_dir.path().to_path_buf();
+
+        let mut jobs = HashMap::new();
+        jobs.insert(1, create_test_job(1, "build"));
+
+        let cache = JobCache::new(jobs);
+        let repository = "owner/repo";
+
+        // Save cache
+        cache
+            .save_with_base(repository, Some(base_dir.clone()))
+            .unwrap();
+
+        // Verify it exists
+        let loaded = JobCache::load_with_base(repository, Some(base_dir.clone()));
+        assert!(loaded.is_some());
+
+        // Clear cache
+        let result = JobCache::clear_with_base(repository, Some(base_dir.clone()));
+        assert!(result.is_ok());
+
+        // Verify it's gone
+        let loaded = JobCache::load_with_base(repository, Some(base_dir));
+        assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn test_cache_file_path_format() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_dir = temp_dir.path().to_path_buf();
+
+        let path =
+            JobCache::get_cache_file_path_with_base("owner/repo", Some(base_dir.clone())).unwrap();
+
+        // Path should be: <base>/cilens/github/owner-repo.json
+        assert!(path.ends_with("cilens/github/owner-repo.json"));
+        assert!(path.starts_with(&base_dir));
+    }
+
+    #[test]
+    fn test_cache_empty_jobs() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_dir = temp_dir.path().to_path_buf();
+
+        let jobs = HashMap::new();
+        let cache = JobCache::new(jobs);
+        let repository = "owner/repo";
+
+        // Save and load empty cache
+        cache
+            .save_with_base(repository, Some(base_dir.clone()))
+            .unwrap();
+        let loaded = JobCache::load_with_base(repository, Some(base_dir)).unwrap();
+
+        assert_eq!(loaded.jobs.len(), 0);
+    }
+}
