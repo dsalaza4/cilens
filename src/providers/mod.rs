@@ -1,3 +1,5 @@
-mod gitlab;
+pub mod github;
+pub mod gitlab;
 
-pub use gitlab::{GitLabProvider, JobCache};
+pub use github::GitHubProvider;
+pub use gitlab::GitLabProvider;
