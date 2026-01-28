@@ -1,6 +1,6 @@
 # 🔍 CILens - CI/CD Insights Tool
 
-A Rust CLI tool for collecting and analyzing CI/CD insights from GitLab.
+A Rust CLI tool for collecting and analyzing CI/CD insights from GitHub Actions and GitLab.
 
 ![CILens Output](static/output.png)
 
@@ -41,6 +41,21 @@ nix run github:dsalaza4/cilens/v0.8.0 -- --help
 
 ## 🚀 Quick Start
 
+### GitHub Actions
+
+```bash
+# Get your GitHub token from: https://github.com/settings/tokens
+# Required scope: actions:read
+# Keep in mind that if you do not use a token,
+# Unauthenticated rate limiting will apply.
+
+export GITHUB_TOKEN="ghp-your-token"
+
+cilens github owner/repo
+```
+
+### GitLab
+
 ```bash
 # Get your GitLab token from: https://gitlab.com/-/profile/personal_access_tokens
 # Required scope: read_api
@@ -53,39 +68,41 @@ cilens gitlab group/project
 ## 💡 Usage
 
 ```bash
-# Default: Human-readable summary (displays top issues, optimization targets)
-cilens gitlab your/project
+# Default: Human-readable summary
+cilens github owner/repo
 
-# Compact JSON output for programmatic analysis
-cilens gitlab your/project --json > insights.json
+# JSON output for programmatic analysis
+cilens github owner/repo --json                # Compact
+cilens github owner/repo --json-pretty         # Pretty-printed
 
-# Pretty-printed JSON
-cilens gitlab your/project --json-pretty > insights.json
-
-# Self-hosted GitLab
-cilens gitlab your/project --base-url "https://gitlab.example.com"
+# Self-hosted instances
+cilens github owner/repo --base-url "https://github.example.com"
 
 # Adjust noise filtering (default: 0.2% of total executions)
-cilens gitlab your/project --min-executions-percentage 0.5  # More aggressive filtering
-cilens gitlab your/project --min-executions-percentage 0    # No filtering
+cilens github owner/repo --min-executions-percentage 0.5 # More aggressive
+cilens github owner/repo --min-executions-percentage 0   # No filtering
 
 # Fetch more jobs (default: 2000)
-cilens gitlab your/project --limit 5000
+cilens github owner/repo --limit 5000
 
-# Clear cached data for a project
-cilens gitlab your/project --clear-cache
+# Clear cached data
+cilens github owner/repo --clear-cache
 ```
+
+> [!TIP]
+>
+> All flags work identically for both `github` and `gitlab` commands.
 
 ### 🔄 Reliability & Performance
 
 CILens is designed to handle large-scale job fetches reliably:
 
 - **Automatic Retry**: Network errors, rate limits (429), and server errors (5xx) are automatically retried up to 30 times with 10-second delays
-- **Concurrency Limiting**: Maximum 500 concurrent requests to prevent overwhelming GitLab's API
-- **Pagination**: Automatically handles pagination to fetch all jobs (50 per page)
+- **Concurrency Limiting**: 300 concurrent requests for GitHub Actions, 500 for GitLab
+- **Pagination**: Automatically handles pagination (100 per page for GitHub, 50 per page for GitLab)
 - **Graceful Degradation**: Transient failures are logged and retried transparently
 
-This makes it suitable for analyzing projects with thousands of job executions even from busy GitLab instances.
+This makes it suitable for analyzing projects with thousands of job executions even from busy CI/CD instances.
 
 ### ⚡ Caching
 
@@ -96,19 +113,19 @@ CILens automatically caches job data for instant subsequent runs:
 - **Smart Merging**: Cache automatically merges with fresh API data if more jobs are needed
 - **Per-Project Cache**: Each project gets its own cache file
 - **Platform-Aware**: Uses platform-specific cache locations:
-  - Linux: `~/.cache/cilens/gitlab/`
-  - macOS: `~/Library/Caches/cilens/gitlab/`
-  - Windows: `%LOCALAPPDATA%\cilens\gitlab\`
+  - Linux: `~/.cache/cilens/{github,gitlab}/`
+  - macOS: `~/Library/Caches/cilens/{github,gitlab}/`
+  - Windows: `%LOCALAPPDATA%\cilens\{github,gitlab}\`
 - **Transparent**: Automatically checks cache before fetching from API
 
 #### Cache Management
 
 ```bash
 # Use cache automatically (default)
-cilens gitlab your/project
+cilens github owner/repo
 
 # Clear cache to force fresh data
-cilens gitlab your/project --clear-cache
+cilens github owner/repo --clear-cache
 ```
 
 **When to clear cache**: When you want to ensure you have the absolute latest job data, or when testing changes to job configurations.
@@ -244,8 +261,8 @@ For programmatic analysis or integration with other tools, use the `--json` flag
 When using `--json` output, the data structure includes:
 
 **Top-Level Fields:**
-- **`provider`**: CI provider name (e.g., "GitLab")
-- **`project`**: Project identifier (e.g., "group/project")
+- **`provider`**: CI provider name (e.g., "GitHub", "GitLab")
+- **`project`**: Project identifier (e.g., "owner/repo" for GitHub, "group/project" for GitLab)
 - **`collected_at`**: Timestamp when insights were collected
 - **`total_jobs`**: Total number of unique jobs analyzed (after filtering)
 
@@ -257,15 +274,15 @@ When using `--json` output, the data structure includes:
 - **`time_to_feedback_p50`**: Median time from pipeline start to job completion in seconds (calculated from successful first-try jobs only)
 - **`time_to_feedback_p95`**: 95th percentile time to feedback (planning metric) (calculated from successful first-try jobs only)
 - **`time_to_feedback_p99`**: 99th percentile time to feedback (worst-case) (calculated from successful first-try jobs only)
-- **`predecessors`**: Job names that must complete before this one (on the critical path to this job)
-- **`retry_rate`**: Percentage of job executions that were retries (0.0 if job never needed retries)
-- **`retried_executions`**: Object with `count` and `links` - clickable GitLab URLs to investigate specific retried job runs
+- **`predecessors`**: Job names that must complete before this one (on the critical path to this job). Note: GitLab extracts from `needs` keyword; GitHub shows "N/A" (GitHub API does not support job needs)
+- **`retry_rate`**: Percentage of job executions that were retries (0.0 if job never needed retries). GitLab uses `retried` flag; GitHub uses `run_attempt > 1`
+- **`retried_executions`**: Object with `count` and `links` - clickable URLs to investigate specific retried job runs
 - **`failure_rate`**: Percentage of executions that failed and stayed failed (indicates how often the job catches real bugs)
-- **`failed_executions`**: Object with `count` and `links` - clickable GitLab URLs to investigate failed job runs
+- **`failed_executions`**: Object with `count` and `links` - clickable URLs to investigate failed job runs
 - **`success_rate`**: Percentage of executions that succeeded
-- **`successful_executions`**: Object with `count` and `links` - clickable GitLab URLs to investigate successful job runs
+- **`successful_executions`**: Object with `count` and `links` - clickable URLs to investigate successful job runs
 - **`total_executions`**: Total number of times this job executed across all pipelines, including successful runs, retries, and failures
 
 **Understanding Percentiles:** Percentiles show the distribution of values rather than just the average, which can be misleading for skewed data. P50 (median) represents typical performance, P95 is better for capacity planning and SLAs (95% of runs complete within this time), and P99 helps identify outliers.
 
-**Finding optimization targets:** Jobs with the highest `time_to_feedback_p50` have the slowest typical feedback time and are the best candidates for optimization. Check their `predecessors` to see if you can parallelize or speed up dependencies. Jobs with high `retry_rate` indicate intermittent reliability issues - click the `retried_executions.links` to investigate specific retried runs in GitLab. Jobs with high `failure_rate` are successfully catching bugs - click the `failed_executions.links` to see which runs failed and analyze the logs.
+**Finding optimization targets:** Jobs with the highest `time_to_feedback_p50` have the slowest typical feedback time and are the best candidates for optimization. Check their `predecessors` to see if you can parallelize or speed up dependencies. Jobs with high `retry_rate` indicate intermittent reliability issues - click the `retried_executions.links` to investigate specific retried runs. Jobs with high `failure_rate` are successfully catching bugs - click the `failed_executions.links` to see which runs failed and analyze the logs.

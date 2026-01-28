@@ -3,7 +3,7 @@
 # type(scope): subject
 #
 # Types: feat, fix, docs, style, refactor, test, chore, build, perf, revert
-# Scopes: core, ci, dist, gitlab
+# Scopes: core, ci, dist, github, gitlab
 #
 # Rules:
 # - Scope is mandatory
@@ -12,6 +12,7 @@
 # - Blank line before footer (optional)
 #
 # Examples:
+# feat(github): add support for workflow artifacts
 # feat(gitlab): add support for pipeline filters
 # fix(core): resolve cache invalidation bug
 # docs(core): update installation instructions

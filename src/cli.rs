@@ -70,7 +70,6 @@ enum Commands {
         min_executions_percentage: f64,
     },
     /// Collect CI/CD insights from GitHub Actions
-    #[command(alias = "gh")]
     Github {
         #[arg(help = "GitHub repository (e.g., 'owner/repo')")]
         repository: String,

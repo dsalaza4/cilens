@@ -38,10 +38,13 @@ Thanks for your interest in contributing! This document provides guidelines to h
    git config commit.template .gitmessage
    ```
 
-4. **Get a GitLab token for testing:**
-   - Visit <https://gitlab.com/-/profile/personal_access_tokens>
-   - Create a token with `read_api` scope
-   - Export it: `export GITLAB_TOKEN="glpat-your-token"`
+4. **Get tokens for testing:**
+   - **GitHub**: Visit <https://github.com/settings/tokens>
+     - Create a token with `actions:read` scope
+     - Export it: `export GITHUB_TOKEN="ghp-your-token"`
+   - **GitLab**: Visit <https://gitlab.com/-/profile/personal_access_tokens>
+     - Create a token with `read_api` scope
+     - Export it: `export GITLAB_TOKEN="glpat-your-token"`
 
 ## Development Workflow
 
@@ -76,11 +79,12 @@ Thanks for your interest in contributing! This document provides guidelines to h
    - Follow [Conventional Commits](https://www.conventionalcommits.org/)
    - Format: `type(scope): description`
    - Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `build`, `perf`, `revert`
-   - Scopes: `core`, `ci`, `dist`, `gitlab`
+   - Scopes: `core`, `ci`, `dist`, `github`, `gitlab`
    - The commit template (`.gitmessage`) will guide you with the correct format
    - Examples:
 
    ```text
+   feat(github): add support for workflow artifacts
    feat(gitlab): add support for merge request pipelines
    fix(core): handle corrupted cache files gracefully
    docs(core): update installation instructions
