@@ -68,6 +68,20 @@ enum Commands {
             help = "Minimum execution percentage to include a job (e.g., 0.2 means jobs must have at least 0.2% of total executions)"
         )]
         min_executions_percentage: f64,
+
+        #[arg(
+            long,
+            conflicts_with = "tag",
+            help = "Filter jobs by branch name (e.g., 'main', 'develop')"
+        )]
+        branch: Option<String>,
+
+        #[arg(
+            long,
+            conflicts_with = "branch",
+            help = "Filter jobs by tag name (e.g., 'v1.0.0')"
+        )]
+        tag: Option<String>,
     },
     /// Collect CI/CD insights from GitHub Actions
     Github {
@@ -96,6 +110,20 @@ enum Commands {
             help = "Minimum execution percentage to include a job (e.g., 0.2 means jobs must have at least 0.2% of total executions)"
         )]
         min_executions_percentage: f64,
+
+        #[arg(
+            long,
+            conflicts_with = "tag",
+            help = "Filter jobs by branch name (e.g., 'main', 'develop')"
+        )]
+        branch: Option<String>,
+
+        #[arg(
+            long,
+            conflicts_with = "branch",
+            help = "Filter jobs by tag name (e.g., 'v1.0.0')"
+        )]
+        tag: Option<String>,
     },
 }
 
@@ -109,6 +137,8 @@ impl Cli {
         limit: usize,
         clear_cache: bool,
         min_executions_percentage: f64,
+        branch: Option<&String>,
+        tag: Option<&String>,
     ) -> Result<()> {
         if clear_cache {
             crate::providers::gitlab::JobCache::clear(project_path)?;
@@ -128,7 +158,12 @@ impl Cli {
 
         info!("Collecting GitLab insights for project: {project_path}");
         let insights = provider
-            .collect_insights(limit, min_executions_percentage)
+            .collect_insights(
+                limit,
+                min_executions_percentage,
+                branch.map(String::as_str),
+                tag.map(String::as_str),
+            )
             .await?;
 
         if self.json_pretty {
@@ -153,6 +188,8 @@ impl Cli {
         limit: usize,
         clear_cache: bool,
         min_executions_percentage: f64,
+        branch: Option<&String>,
+        tag: Option<&String>,
     ) -> Result<()> {
         if clear_cache {
             crate::providers::github::JobCache::clear(repository)?;
@@ -172,7 +209,12 @@ impl Cli {
 
         info!("Collecting GitHub Actions insights for repository: {repository}");
         let insights = provider
-            .collect_insights(limit, min_executions_percentage)
+            .collect_insights(
+                limit,
+                min_executions_percentage,
+                branch.map(String::as_str),
+                tag.map(String::as_str),
+            )
             .await?;
 
         if self.json_pretty {
@@ -198,6 +240,8 @@ impl Cli {
                 limit,
                 clear_cache,
                 min_executions_percentage,
+                branch,
+                tag,
             } => {
                 self.execute_gitlab(
                     project_path,
@@ -206,6 +250,8 @@ impl Cli {
                     *limit,
                     *clear_cache,
                     *min_executions_percentage,
+                    branch.as_ref(),
+                    tag.as_ref(),
                 )
                 .await
             }
@@ -216,6 +262,8 @@ impl Cli {
                 limit,
                 clear_cache,
                 min_executions_percentage,
+                branch,
+                tag,
             } => {
                 self.execute_github(
                     repository,
@@ -224,6 +272,8 @@ impl Cli {
                     *limit,
                     *clear_cache,
                     *min_executions_percentage,
+                    branch.as_ref(),
+                    tag.as_ref(),
                 )
                 .await
             }

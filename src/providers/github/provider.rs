@@ -75,11 +75,14 @@ impl GitHubProvider {
     /// - If cache exists and has enough jobs, uses cached data
     /// - If cache exists but doesn't have enough jobs, merges cached with fresh jobs
     /// - Otherwise fetches from API and saves to cache
+    /// - Cache is bypassed when `branch` or `tag` filter is specified
     ///
     /// # Arguments
     ///
     /// * `limit` - Maximum number of jobs to fetch
     /// * `min_executions_percentage` - Minimum percentage of total executions for a job to be included
+    /// * `branch` - Optional branch name to filter runs by (e.g., "main")
+    /// * `tag` - Optional tag name to filter runs by (e.g., "v1.0.0")
     ///
     /// # Returns
     ///
@@ -95,6 +98,8 @@ impl GitHubProvider {
         &self,
         limit: usize,
         min_executions_percentage: f64,
+        branch: Option<&str>,
+        tag: Option<&str>,
     ) -> Result<CIInsights> {
         info!(
             "Starting insights collection for repository: {}",
@@ -104,7 +109,14 @@ impl GitHubProvider {
         // Phase 1: Check cache or fetch jobs
         let progress = PhaseProgress::start_phase_1();
 
-        let jobs = if let Some(cache) = JobCache::load(&self.repository) {
+        // GitHub uses the same `branch` API parameter for both branch and tag filtering
+        // (the API matches on `head_branch` which contains the tag name for tag-triggered runs)
+        let ref_filter = branch.or(tag);
+
+        let jobs = if let Some(ref_name) = ref_filter {
+            info!("Ref filter active: '{ref_name}' - fetching from API (cache bypassed)");
+            self.fetch_jobs_from_api(limit, Some(ref_name)).await?
+        } else if let Some(cache) = JobCache::load(&self.repository) {
             if cache.jobs.len() >= limit {
                 info!("Using {} cached jobs (limit: {})", cache.jobs.len(), limit);
                 Self::map_to_sorted_jobs(cache.jobs, limit)
@@ -115,7 +127,8 @@ impl GitHubProvider {
                     cache.jobs.len(),
                     limit
                 );
-                self.fetch_and_merge_until_limit(cache.jobs, limit).await?
+                self.fetch_and_merge_until_limit(cache.jobs, limit, None)
+                    .await?
             }
         } else {
             info!("No cache found, fetching from API");
@@ -142,7 +155,7 @@ impl GitHubProvider {
 
     /// Fetches jobs from API and saves to cache.
     async fn fetch_and_cache_jobs(&self, limit: usize) -> Result<Vec<GitHubJob>> {
-        let jobs = self.fetch_jobs_from_api(limit).await?;
+        let jobs = self.fetch_jobs_from_api(limit, None).await?;
         self.save_cache(&jobs);
         Ok(jobs)
     }
@@ -152,7 +165,11 @@ impl GitHubProvider {
     /// Orchestrates fetching workflow runs and their jobs from the GitHub API.
     /// Fetches runs page-by-page, processing each page's jobs concurrently.
     /// Stops when the job limit is reached to avoid over-fetching runs.
-    async fn fetch_jobs_from_api(&self, limit: usize) -> Result<Vec<GitHubJob>> {
+    async fn fetch_jobs_from_api(
+        &self,
+        limit: usize,
+        branch: Option<&str>,
+    ) -> Result<Vec<GitHubJob>> {
         info!("Fetching GitHub Actions jobs (limit: {limit})...");
 
         let mut all_jobs = Vec::new();
@@ -165,7 +182,7 @@ impl GitHubProvider {
                 all_jobs.len()
             );
 
-            let runs = self.client.fetch_runs(page).await?;
+            let runs = self.client.fetch_runs(page, branch).await?;
 
             if runs.is_empty() {
                 info!("No more workflow runs found");
@@ -231,6 +248,7 @@ impl GitHubProvider {
         &self,
         mut cached_jobs: std::collections::HashMap<u64, GitHubJob>,
         limit: usize,
+        branch: Option<&str>,
     ) -> Result<Vec<GitHubJob>> {
         let mut page = 1;
         let initial_cache_size = cached_jobs.len();
@@ -252,7 +270,7 @@ impl GitHubProvider {
             info!("Have {unique_count} unique jobs, need {limit} - fetching more (page {page})...");
 
             // Fetch next page of runs
-            let runs = self.client.fetch_runs(page).await?;
+            let runs = self.client.fetch_runs(page, branch).await?;
 
             if runs.is_empty() {
                 info!("No more workflow runs available. Collected {unique_count} unique jobs (requested {limit})");

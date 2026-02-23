@@ -118,11 +118,14 @@ impl GitLabProvider {
     /// - If cache exists and has enough jobs, uses cached data
     /// - If cache exists but doesn't have enough jobs, merges cached with fresh jobs
     /// - Otherwise fetches from API and saves to cache
+    /// - Cache is bypassed when `branch` or `tag` filter is specified
     ///
     /// # Arguments
     ///
     /// * `limit` - Maximum number of jobs to fetch
     /// * `min_executions_percentage` - Minimum percentage of total executions for a job to be included
+    /// * `branch` - Optional branch name to filter jobs by (e.g., "main")
+    /// * `tag` - Optional tag name to filter jobs by (e.g., "v1.0.0")
     ///
     /// # Returns
     ///
@@ -138,6 +141,8 @@ impl GitLabProvider {
         &self,
         limit: usize,
         min_executions_percentage: f64,
+        branch: Option<&str>,
+        tag: Option<&str>,
     ) -> Result<CIInsights> {
         info!(
             "Starting insights collection for project: {}",
@@ -147,7 +152,13 @@ impl GitLabProvider {
         // Phase 1: Check cache or fetch jobs
         let progress = PhaseProgress::start_phase_1();
 
-        let jobs = if let Some(cache) = JobCache::load(&self.project_path) {
+        let jobs = if let Some(branch_name) = branch {
+            info!("Branch filter active: '{branch_name}' - fetching from API (cache bypassed)");
+            self.fetch_jobs_by_branch(branch_name, limit).await?
+        } else if let Some(tag_name) = tag {
+            info!("Tag filter active: '{tag_name}' - fetching from API (cache bypassed)");
+            self.fetch_jobs_by_tag(tag_name, limit).await?
+        } else if let Some(cache) = JobCache::load(&self.project_path) {
             if cache.jobs.len() >= limit {
                 info!("Using {} cached jobs (limit: {})", cache.jobs.len(), limit);
                 Self::map_to_sorted_jobs(cache.jobs, limit)
@@ -200,6 +211,30 @@ impl GitLabProvider {
         let job_nodes = self.client.fetch_jobs(&self.project_path, limit).await?;
         info!("Fetched {} jobs from API", job_nodes.len());
         Ok(Self::transform_job_nodes(job_nodes))
+    }
+
+    /// Fetches jobs filtered by branch name (bypasses cache).
+    ///
+    /// Does NOT pass `refType` so GitLab returns all pipeline types for the branch
+    /// (push pipelines AND merge request pipelines).
+    async fn fetch_jobs_by_branch(&self, branch: &str, limit: usize) -> Result<Vec<GitLabJob>> {
+        let jobs = self
+            .client
+            .fetch_jobs_by_ref(&self.project_path, branch, None, limit)
+            .await?;
+        info!("Fetched {} jobs for branch '{}'", jobs.len(), branch);
+        Ok(jobs)
+    }
+
+    /// Fetches jobs filtered by tag name (bypasses cache).
+    async fn fetch_jobs_by_tag(&self, tag: &str, limit: usize) -> Result<Vec<GitLabJob>> {
+        use super::client::jobs::GitLabRefType;
+        let jobs = self
+            .client
+            .fetch_jobs_by_ref(&self.project_path, tag, Some(GitLabRefType::TAGS), limit)
+            .await?;
+        info!("Fetched {} jobs for tag '{}'", jobs.len(), tag);
+        Ok(jobs)
     }
 
     /// Fetches jobs and merges with cache until we have enough unique jobs.
@@ -258,5 +293,75 @@ impl GitLabProvider {
         let result = Self::map_to_sorted_jobs(cached_jobs, limit);
         self.save_cache(&result);
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    fn make_job(id: &str, created_at: chrono::DateTime<Utc>) -> GitLabJob {
+        GitLabJob {
+            id: id.to_string(),
+            name: "test-job".to_string(),
+            duration: 60.0,
+            status: "SUCCESS".to_string(),
+            retried: false,
+            needs: vec![],
+            created_at,
+            finished_at: created_at + chrono::Duration::seconds(60),
+        }
+    }
+
+    #[test]
+    fn test_jobs_to_map() {
+        let jobs = vec![
+            make_job("id1", Utc.timestamp_opt(1_000, 0).unwrap()),
+            make_job("id2", Utc.timestamp_opt(2_000, 0).unwrap()),
+        ];
+        let map = GitLabProvider::jobs_to_map(&jobs);
+        assert_eq!(map.len(), 2);
+        assert!(map.contains_key("id1"));
+        assert!(map.contains_key("id2"));
+    }
+
+    #[test]
+    fn test_map_to_sorted_jobs_order() {
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "older".to_string(),
+            make_job("older", Utc.timestamp_opt(1_000, 0).unwrap()),
+        );
+        map.insert(
+            "newer".to_string(),
+            make_job("newer", Utc.timestamp_opt(9_000, 0).unwrap()),
+        );
+        map.insert(
+            "middle".to_string(),
+            make_job("middle", Utc.timestamp_opt(5_000, 0).unwrap()),
+        );
+
+        let sorted = GitLabProvider::map_to_sorted_jobs(map, 10);
+
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[0].id, "newer");
+        assert_eq!(sorted[1].id, "middle");
+        assert_eq!(sorted[2].id, "older");
+    }
+
+    #[test]
+    fn test_map_to_sorted_jobs_respects_limit() {
+        let mut map = std::collections::HashMap::new();
+        for i in 0..10u64 {
+            let id = format!("job-{i}");
+            map.insert(
+                id.clone(),
+                make_job(&id, Utc.timestamp_opt(i as i64 * 1000, 0).unwrap()),
+            );
+        }
+
+        let sorted = GitLabProvider::map_to_sorted_jobs(map, 3);
+        assert_eq!(sorted.len(), 3);
     }
 }

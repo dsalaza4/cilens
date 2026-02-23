@@ -50,6 +50,7 @@ impl GitHubClient {
     /// # Arguments
     ///
     /// * `page` - Page number to fetch (1-indexed)
+    /// * `branch` - Optional branch or tag name to filter runs by
     ///
     /// # Returns
     ///
@@ -58,11 +59,15 @@ impl GitHubClient {
     /// # Errors
     ///
     /// Returns an error if the API request fails or response cannot be parsed
-    pub async fn fetch_runs(&self, page: usize) -> Result<Vec<WorkflowRun>> {
-        let path = format!(
+    pub async fn fetch_runs(&self, page: usize, branch: Option<&str>) -> Result<Vec<WorkflowRun>> {
+        let mut path = format!(
             "repos/{}/{}/actions/runs?per_page={}&page={}",
             self.owner, self.repo, PAGE_SIZE, page
         );
+
+        if let Some(branch_name) = branch {
+            path.push_str(&format!("&branch={branch_name}"));
+        }
 
         let url = self
             .api_url
@@ -159,6 +164,40 @@ mod tests {
         assert_eq!(
             expected_path,
             "repos/test-owner/test-repo/actions/runs?per_page=100&page=5"
+        );
+    }
+
+    #[test]
+    fn test_fetch_runs_url_construction_with_branch_filter() {
+        let owner = "test-owner";
+        let repo = "test-repo";
+        let page = 1;
+        let branch = "main";
+
+        let expected_path = format!(
+            "repos/{owner}/{repo}/actions/runs?per_page={PAGE_SIZE}&page={page}&branch={branch}"
+        );
+
+        assert_eq!(
+            expected_path,
+            "repos/test-owner/test-repo/actions/runs?per_page=100&page=1&branch=main"
+        );
+    }
+
+    #[test]
+    fn test_fetch_runs_url_construction_with_tag_filter() {
+        let owner = "test-owner";
+        let repo = "test-repo";
+        let page = 2;
+        let tag = "v1.0.0";
+
+        let expected_path = format!(
+            "repos/{owner}/{repo}/actions/runs?per_page={PAGE_SIZE}&page={page}&branch={tag}"
+        );
+
+        assert_eq!(
+            expected_path,
+            "repos/test-owner/test-repo/actions/runs?per_page=100&page=2&branch=v1.0.0"
         );
     }
 
