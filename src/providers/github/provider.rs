@@ -54,7 +54,7 @@ impl GitHubProvider {
         limit: usize,
     ) -> Vec<GitHubJob> {
         let mut jobs: Vec<GitHubJob> = map.into_values().collect();
-        jobs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        jobs.sort_by_key(|b| std::cmp::Reverse(b.started_at));
         jobs.into_iter().take(limit).collect()
     }
 
@@ -484,15 +484,14 @@ mod tests {
         assert_eq!(github_job.completed_at, None);
     }
 
-    #[test]
-    fn test_jobs_to_map() {
-        let jobs = vec![
-            create_github_job(1, "build"),
-            create_github_job(2, "test"),
-            create_github_job(3, "deploy"),
-        ];
-
-        let map = GitHubProvider::jobs_to_map(&jobs);
+    #[fixtura::test]
+    fn test_jobs_to_map(
+        #[fixtura(id = 1u64, name = "build".to_string())] job1: GitHubJob,
+        #[fixtura(id = 2u64, name = "test".to_string())] job2: GitHubJob,
+        #[fixtura(id = 3u64, name = "deploy".to_string())] job3: GitHubJob,
+    ) {
+        let all = vec![job1, job2, job3];
+        let map = GitHubProvider::jobs_to_map(&all);
 
         assert_eq!(map.len(), 3);
         assert_eq!(map.get(&1).unwrap().name, "build");
@@ -500,91 +499,46 @@ mod tests {
         assert_eq!(map.get(&3).unwrap().name, "deploy");
     }
 
-    #[test]
-    fn test_map_to_sorted_jobs() {
+    #[fixtura::test]
+    fn test_map_to_sorted_jobs(
+        #[fixtura(id = 1u64, name = "job1".to_string(), started_at = Utc.timestamp_opt(1_609_459_210, 0).unwrap())]
+        job1: GitHubJob,
+        #[fixtura(id = 2u64, name = "job2".to_string(), started_at = Utc.timestamp_opt(1_609_459_230, 0).unwrap())]
+        job2: GitHubJob,
+        #[fixtura(id = 3u64, name = "job3".to_string(), started_at = Utc.timestamp_opt(1_609_459_220, 0).unwrap())]
+        job3: GitHubJob,
+    ) {
         let mut map = HashMap::new();
-        map.insert(
-            1,
-            create_github_job_with_time(1, "job1", Utc.timestamp_opt(1_609_459_210, 0).unwrap()),
-        );
-        map.insert(
-            2,
-            create_github_job_with_time(2, "job2", Utc.timestamp_opt(1_609_459_230, 0).unwrap()),
-        );
-        map.insert(
-            3,
-            create_github_job_with_time(3, "job3", Utc.timestamp_opt(1_609_459_220, 0).unwrap()),
-        );
+        map.insert(job1.id, job1);
+        map.insert(job2.id, job2);
+        map.insert(job3.id, job3);
 
-        let jobs = GitHubProvider::map_to_sorted_jobs(map, 10);
+        let sorted = GitHubProvider::map_to_sorted_jobs(map, 10);
 
-        assert_eq!(jobs.len(), 3);
-        // Should be sorted by started_at descending (newest first)
-        assert_eq!(jobs[0].name, "job2"); // 230
-        assert_eq!(jobs[1].name, "job3"); // 220
-        assert_eq!(jobs[2].name, "job1"); // 210
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[0].name, "job2"); // 230 — newest
+        assert_eq!(sorted[1].name, "job3"); // 220
+        assert_eq!(sorted[2].name, "job1"); // 210 — oldest
     }
 
-    #[test]
-    fn test_map_to_sorted_jobs_respects_limit() {
+    #[fixtura::test]
+    fn test_map_to_sorted_jobs_respects_limit(
+        #[fixtura(id = 1u64, name = "job1".to_string(), started_at = Utc.timestamp_opt(1_609_459_210, 0).unwrap())]
+        job1: GitHubJob,
+        #[fixtura(id = 2u64, name = "job2".to_string(), started_at = Utc.timestamp_opt(1_609_459_230, 0).unwrap())]
+        job2: GitHubJob,
+        #[fixtura(id = 3u64, name = "job3".to_string(), started_at = Utc.timestamp_opt(1_609_459_220, 0).unwrap())]
+        job3: GitHubJob,
+    ) {
         let mut map = HashMap::new();
-        map.insert(
-            1,
-            create_github_job_with_time(1, "job1", Utc.timestamp_opt(1_609_459_210, 0).unwrap()),
-        );
-        map.insert(
-            2,
-            create_github_job_with_time(2, "job2", Utc.timestamp_opt(1_609_459_230, 0).unwrap()),
-        );
-        map.insert(
-            3,
-            create_github_job_with_time(3, "job3", Utc.timestamp_opt(1_609_459_220, 0).unwrap()),
-        );
+        map.insert(job1.id, job1);
+        map.insert(job2.id, job2);
+        map.insert(job3.id, job3);
 
-        let jobs = GitHubProvider::map_to_sorted_jobs(map, 2);
+        let sorted = GitHubProvider::map_to_sorted_jobs(map, 2);
 
-        assert_eq!(jobs.len(), 2);
-        // Should be the 2 newest jobs
-        assert_eq!(jobs[0].name, "job2");
-        assert_eq!(jobs[1].name, "job3");
-    }
-
-    // Helper functions
-    fn create_github_job(id: u64, name: &str) -> GitHubJob {
-        GitHubJob {
-            id,
-            run_id: 1,
-            name: name.to_string(),
-            workflow_name: "test-workflow".to_string(),
-            status: "completed".to_string(),
-            conclusion: Some("success".to_string()),
-            run_attempt: 1,
-            duration: 60.0,
-            started_at: Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at: Some(Utc.timestamp_opt(1_609_459_260, 0).unwrap()),
-            workflow_run_started_at: Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            html_url: format!("https://github.com/owner/repo/actions/runs/1/jobs/{id}"),
-        }
-    }
-
-    fn create_github_job_with_time(
-        id: u64,
-        name: &str,
-        started_at: chrono::DateTime<Utc>,
-    ) -> GitHubJob {
-        GitHubJob {
-            id,
-            run_id: 1,
-            name: name.to_string(),
-            workflow_name: "test-workflow".to_string(),
-            status: "completed".to_string(),
-            conclusion: Some("success".to_string()),
-            run_attempt: 1,
-            duration: 60.0,
-            started_at,
-            completed_at: Some(started_at + chrono::Duration::seconds(60)),
-            workflow_run_started_at: started_at,
-            html_url: format!("https://github.com/owner/repo/actions/runs/1/jobs/{id}"),
-        }
+        assert_eq!(sorted.len(), 2);
+        assert_eq!(sorted[0].name, "job2"); // newest
+        assert_eq!(sorted[1].name, "job3");
     }
 }

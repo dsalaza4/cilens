@@ -354,30 +354,14 @@ mod tests {
 
     mod aggregate_jobs_by_name {
         use super::*;
-        use chrono::Utc;
 
-        fn create_test_job(name: &str, id: &str) -> GitLabJob {
-            GitLabJob {
-                id: id.to_string(),
-                name: name.to_string(),
-                duration: 100.0,
-                status: "SUCCESS".to_string(),
-                retried: false,
-                needs: vec![],
-                created_at: Utc::now(),
-                finished_at: Utc::now(),
-            }
-        }
-
-        #[test]
-        fn aggregates_jobs_by_name() {
-            let jobs = vec![
-                create_test_job("build", "1"),
-                create_test_job("test", "2"),
-                create_test_job("build", "3"),
-            ];
-
-            let result = aggregate_jobs_by_name(jobs);
+        #[fixtura::test]
+        fn aggregates_jobs_by_name(
+            #[fixtura(name = "build".to_string())] job1: GitLabJob,
+            #[fixtura(name = "test".to_string())] job2: GitLabJob,
+            #[fixtura(name = "build".to_string())] job3: GitLabJob,
+        ) {
+            let result = aggregate_jobs_by_name(vec![job1, job2, job3]);
             assert_eq!(result.len(), 2);
             assert_eq!(result.get("build").unwrap().len(), 2);
             assert_eq!(result.get("test").unwrap().len(), 1);
@@ -385,15 +369,13 @@ mod tests {
 
         #[test]
         fn handles_empty_list() {
-            let jobs = vec![];
-            let result = aggregate_jobs_by_name(jobs);
+            let result = aggregate_jobs_by_name(vec![]);
             assert_eq!(result.len(), 0);
         }
 
-        #[test]
-        fn handles_single_job() {
-            let jobs = vec![create_test_job("deploy", "1")];
-            let result = aggregate_jobs_by_name(jobs);
+        #[fixtura::test]
+        fn handles_single_job(#[fixtura(name = "deploy".to_string())] job: GitLabJob) {
+            let result = aggregate_jobs_by_name(vec![job]);
             assert_eq!(result.len(), 1);
             assert_eq!(result.get("deploy").unwrap().len(), 1);
         }
@@ -446,62 +428,43 @@ mod tests {
 
     mod extract_predecessors {
         use super::*;
-        use chrono::Utc;
 
-        fn create_job_with_needs(name: &str, needs: Vec<String>) -> GitLabJob {
-            GitLabJob {
-                id: name.to_string(),
-                name: name.to_string(),
-                duration: 100.0,
-                status: "SUCCESS".to_string(),
-                retried: false,
-                needs,
-                created_at: Utc::now(),
-                finished_at: Utc::now(),
-            }
-        }
-
-        #[test]
-        fn extracts_unique_predecessors() {
-            let executions = vec![
-                create_job_with_needs("test", vec!["build".to_string(), "lint".to_string()]),
-                create_job_with_needs("test", vec!["build".to_string()]),
-            ];
-
+        #[fixtura::test]
+        fn extracts_unique_predecessors(
+            #[fixtura(needs = vec!["build".to_string(), "lint".to_string()])] job1: GitLabJob,
+            #[fixtura(needs = vec!["build".to_string()])] job2: GitLabJob,
+        ) {
+            let executions = vec![job1, job2];
             let result = extract_predecessors(&executions);
             assert_eq!(result.len(), 2);
             assert!(result.contains(&"build".to_string()));
             assert!(result.contains(&"lint".to_string()));
         }
 
-        #[test]
-        fn handles_no_predecessors() {
-            let executions = vec![create_job_with_needs("test", vec![])];
-            let result = extract_predecessors(&executions);
+        #[fixtura::test]
+        fn handles_no_predecessors(#[fixtura(needs = vec![])] job: GitLabJob) {
+            let result = extract_predecessors(&[job]);
             assert_eq!(result.len(), 0);
         }
 
-        #[test]
-        fn deduplicates_predecessors() {
-            let executions = vec![
-                create_job_with_needs("test", vec!["build".to_string()]),
-                create_job_with_needs("test", vec!["build".to_string()]),
-                create_job_with_needs("test", vec!["build".to_string()]),
-            ];
-
+        #[fixtura::test]
+        fn deduplicates_predecessors(
+            #[fixtura(needs = vec!["build".to_string()])] job1: GitLabJob,
+            #[fixtura(needs = vec!["build".to_string()])] job2: GitLabJob,
+            #[fixtura(needs = vec!["build".to_string()])] job3: GitLabJob,
+        ) {
+            let executions = vec![job1, job2, job3];
             let result = extract_predecessors(&executions);
             assert_eq!(result.len(), 1);
             assert_eq!(result[0], "build");
         }
 
-        #[test]
-        fn returns_sorted_predecessors() {
-            let executions = vec![create_job_with_needs(
-                "test",
-                vec!["zyx".to_string(), "abc".to_string(), "mno".to_string()],
-            )];
-
-            let result = extract_predecessors(&executions);
+        #[fixtura::test]
+        fn returns_sorted_predecessors(
+            #[fixtura(needs = vec!["zyx".to_string(), "abc".to_string(), "mno".to_string()])]
+            job: GitLabJob,
+        ) {
+            let result = extract_predecessors(&[job]);
             assert_eq!(result, vec!["abc", "mno", "zyx"]);
         }
     }

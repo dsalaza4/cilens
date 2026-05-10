@@ -16,6 +16,9 @@ target
 # Direnv
 .direnv
 
+# macOS metadata
+.DS_Store
+
 # Test/debug output files
 out.json
 err.log

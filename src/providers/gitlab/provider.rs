@@ -97,7 +97,7 @@ impl GitLabProvider {
         limit: usize,
     ) -> Vec<GitLabJob> {
         let mut jobs: Vec<GitLabJob> = map.into_values().collect();
-        jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        jobs.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         jobs.into_iter().take(limit).collect()
     }
 

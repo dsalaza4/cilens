@@ -155,45 +155,30 @@ impl JobCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use tempfile::TempDir;
 
-    fn create_test_job(id: &str, name: &str) -> GitLabJob {
-        GitLabJob {
-            id: id.to_string(),
-            name: name.to_string(),
-            duration: 10.0,
-            status: "SUCCESS".to_string(),
-            retried: false,
-            needs: vec![],
-            created_at: Utc::now(),
-            finished_at: Utc::now(),
-        }
-    }
-
-    #[test]
-    fn test_cache_save_and_load_roundtrip() {
+    #[fixtura::test]
+    fn test_cache_save_and_load_roundtrip(
+        #[fixtura(id = "1".to_string(), name = "build".to_string())] job1: GitLabJob,
+        #[fixtura(id = "2".to_string(), name = "test".to_string())] job2: GitLabJob,
+        #[fixtura(id = "3".to_string(), name = "deploy".to_string())] job3: GitLabJob,
+    ) {
         let temp_dir = TempDir::new().unwrap();
         let base_dir = temp_dir.path().to_path_buf();
 
-        let mut jobs = HashMap::new();
-        jobs.insert("1".to_string(), create_test_job("1", "build"));
-        jobs.insert("2".to_string(), create_test_job("2", "test"));
-        jobs.insert("3".to_string(), create_test_job("3", "deploy"));
+        let mut map = HashMap::new();
+        map.insert(job1.id.clone(), job1);
+        map.insert(job2.id.clone(), job2);
+        map.insert(job3.id.clone(), job3);
 
-        let cache = JobCache::new(jobs);
+        let cache = JobCache::new(map);
         let project_path = "group/project";
 
-        // Save cache
         cache
             .save_with_base(project_path, Some(base_dir.clone()))
             .unwrap();
 
-        // Load cache
-        let loaded = JobCache::load_with_base(project_path, Some(base_dir));
-        assert!(loaded.is_some());
-
-        let loaded = loaded.unwrap();
+        let loaded = JobCache::load_with_base(project_path, Some(base_dir)).unwrap();
         assert_eq!(loaded.jobs.len(), 3);
         assert_eq!(loaded.jobs.get("1").unwrap().name, "build");
         assert_eq!(loaded.jobs.get("2").unwrap().name, "test");
@@ -209,53 +194,47 @@ mod tests {
         assert!(loaded.is_none());
     }
 
-    #[test]
-    fn test_cache_clear() {
+    #[fixtura::test]
+    fn test_cache_clear(job: GitLabJob) {
         let temp_dir = TempDir::new().unwrap();
         let base_dir = temp_dir.path().to_path_buf();
 
-        let mut jobs = HashMap::new();
-        jobs.insert("1".to_string(), create_test_job("1", "test"));
-        let cache = JobCache::new(jobs);
+        let mut map = HashMap::new();
+        map.insert(job.id.clone(), job);
+        let cache = JobCache::new(map);
         let project_path = "group/project";
 
-        // Save cache
         cache
             .save_with_base(project_path, Some(base_dir.clone()))
             .unwrap();
 
-        // Verify it exists
-        let loaded = JobCache::load_with_base(project_path, Some(base_dir.clone()));
-        assert!(loaded.is_some());
+        assert!(JobCache::load_with_base(project_path, Some(base_dir.clone())).is_some());
 
-        // Clear cache
         JobCache::clear_with_base(project_path, Some(base_dir.clone())).unwrap();
 
-        // Verify it's gone
-        let loaded = JobCache::load_with_base(project_path, Some(base_dir));
-        assert!(loaded.is_none());
+        assert!(JobCache::load_with_base(project_path, Some(base_dir)).is_none());
     }
 
-    #[test]
-    fn test_per_project_cache_files() {
+    #[fixtura::test]
+    fn test_per_project_cache_files(
+        #[fixtura(id = "1".to_string(), name = "test1".to_string())] job1: GitLabJob,
+        #[fixtura(id = "2".to_string(), name = "test2".to_string())] job2: GitLabJob,
+    ) {
         let temp_dir = TempDir::new().unwrap();
         let base_dir = temp_dir.path().to_path_buf();
 
-        let mut jobs1 = HashMap::new();
-        jobs1.insert("1".to_string(), create_test_job("1", "test1"));
-        let cache1 = JobCache::new(jobs1);
-        cache1
+        let mut map1 = HashMap::new();
+        map1.insert(job1.id.clone(), job1);
+        JobCache::new(map1)
             .save_with_base("group/project1", Some(base_dir.clone()))
             .unwrap();
 
-        let mut jobs2 = HashMap::new();
-        jobs2.insert("2".to_string(), create_test_job("2", "test2"));
-        let cache2 = JobCache::new(jobs2);
-        cache2
+        let mut map2 = HashMap::new();
+        map2.insert(job2.id.clone(), job2);
+        JobCache::new(map2)
             .save_with_base("group/project2", Some(base_dir.clone()))
             .unwrap();
 
-        // Verify both caches exist and contain correct data
         let loaded1 = JobCache::load_with_base("group/project1", Some(base_dir.clone())).unwrap();
         assert_eq!(loaded1.jobs.len(), 1);
         assert_eq!(loaded1.jobs.get("1").unwrap().name, "test1");

@@ -37,6 +37,8 @@ url = "2.5"
 [dev-dependencies]
 mockito = "1.5"
 tempfile = "3.13"
+fixtura = "0.8.3"
+fake = { version = "5", features = ["derive", "chrono"] }
 
 # The profile that 'dist' will build with
 [profile.dist]

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Represents a single job execution with its dependencies and execution details.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(fake::Dummy))]
 pub struct GitLabJob {
     /// GraphQL Global ID (e.g., <gid://gitlab/Ci::Job/456>)
     pub id: String,
