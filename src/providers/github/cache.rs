@@ -155,60 +155,40 @@ impl JobCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use std::collections::HashMap;
     use tempfile::TempDir;
 
-    fn create_test_job(id: u64, name: &str) -> GitHubJob {
-        GitHubJob {
-            id,
-            run_id: 1,
-            name: name.to_string(),
-            workflow_name: "test-workflow".to_string(),
-            status: "completed".to_string(),
-            conclusion: Some("success".to_string()),
-            run_attempt: 1,
-            duration: 60.0,
-            started_at: Utc::now(),
-            completed_at: Some(Utc::now()),
-            workflow_run_started_at: Utc::now(),
-            html_url: format!("https://github.com/owner/repo/actions/runs/1/jobs/{id}"),
-        }
-    }
-
-    #[test]
-    fn test_cache_new() {
+    #[fixtura::test]
+    fn test_cache_new(#[fixtura(id = 1u64, name = "build".to_string())] job: GitHubJob) {
         let mut jobs = HashMap::new();
-        jobs.insert(1, create_test_job(1, "build"));
-
+        jobs.insert(job.id, job);
         let cache = JobCache::new(jobs);
         assert_eq!(cache.jobs.len(), 1);
         assert_eq!(cache.jobs.get(&1).unwrap().name, "build");
     }
 
-    #[test]
-    fn test_cache_save_and_load_roundtrip() {
+    #[fixtura::test]
+    fn test_cache_save_and_load_roundtrip(
+        #[fixtura(id = 1u64, name = "build".to_string())] job1: GitHubJob,
+        #[fixtura(id = 2u64, name = "test".to_string())] job2: GitHubJob,
+        #[fixtura(id = 3u64, name = "deploy".to_string())] job3: GitHubJob,
+    ) {
         let temp_dir = TempDir::new().unwrap();
         let base_dir = temp_dir.path().to_path_buf();
 
-        let mut jobs = HashMap::new();
-        jobs.insert(1, create_test_job(1, "build"));
-        jobs.insert(2, create_test_job(2, "test"));
-        jobs.insert(3, create_test_job(3, "deploy"));
+        let mut map = HashMap::new();
+        map.insert(job1.id, job1);
+        map.insert(job2.id, job2);
+        map.insert(job3.id, job3);
 
-        let cache = JobCache::new(jobs);
+        let cache = JobCache::new(map);
         let repository = "owner/repo";
 
-        // Save cache
         cache
             .save_with_base(repository, Some(base_dir.clone()))
             .unwrap();
 
-        // Load cache
-        let loaded = JobCache::load_with_base(repository, Some(base_dir));
-        assert!(loaded.is_some());
-
-        let loaded = loaded.unwrap();
+        let loaded = JobCache::load_with_base(repository, Some(base_dir)).unwrap();
         assert_eq!(loaded.jobs.len(), 3);
         assert_eq!(loaded.jobs.get(&1).unwrap().name, "build");
         assert_eq!(loaded.jobs.get(&2).unwrap().name, "test");
@@ -224,33 +204,26 @@ mod tests {
         assert!(loaded.is_none());
     }
 
-    #[test]
-    fn test_cache_clear_existing() {
+    #[fixtura::test]
+    fn test_cache_clear_existing(#[fixtura(id = 1u64, name = "build".to_string())] job: GitHubJob) {
         let temp_dir = TempDir::new().unwrap();
         let base_dir = temp_dir.path().to_path_buf();
 
         let mut jobs = HashMap::new();
-        jobs.insert(1, create_test_job(1, "build"));
+        jobs.insert(job.id, job);
 
         let cache = JobCache::new(jobs);
         let repository = "owner/repo";
 
-        // Save cache
         cache
             .save_with_base(repository, Some(base_dir.clone()))
             .unwrap();
 
-        // Verify it exists
-        let loaded = JobCache::load_with_base(repository, Some(base_dir.clone()));
-        assert!(loaded.is_some());
+        assert!(JobCache::load_with_base(repository, Some(base_dir.clone())).is_some());
 
-        // Clear cache
-        let result = JobCache::clear_with_base(repository, Some(base_dir.clone()));
-        assert!(result.is_ok());
+        JobCache::clear_with_base(repository, Some(base_dir.clone())).unwrap();
 
-        // Verify it's gone
-        let loaded = JobCache::load_with_base(repository, Some(base_dir));
-        assert!(loaded.is_none());
+        assert!(JobCache::load_with_base(repository, Some(base_dir)).is_none());
     }
 
     #[test]
@@ -261,7 +234,6 @@ mod tests {
         let path =
             JobCache::get_cache_file_path_with_base("owner/repo", Some(base_dir.clone())).unwrap();
 
-        // Path should be: <base>/cilens/github/owner-repo.json
         assert!(path.ends_with("cilens/github/owner-repo.json"));
         assert!(path.starts_with(&base_dir));
     }
@@ -271,11 +243,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let base_dir = temp_dir.path().to_path_buf();
 
-        let jobs = HashMap::new();
-        let cache = JobCache::new(jobs);
+        let cache = JobCache::new(HashMap::new());
         let repository = "owner/repo";
 
-        // Save and load empty cache
         cache
             .save_with_base(repository, Some(base_dir.clone()))
             .unwrap();

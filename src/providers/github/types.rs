@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Represents a single job execution with its workflow context and execution details.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(fake::Dummy))]
 pub struct GitHubJob {
     /// GitHub job ID
     pub id: u64,
