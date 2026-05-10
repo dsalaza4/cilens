@@ -254,18 +254,8 @@ mod tests {
 
     #[fixtura::test]
     fn test_calculate_job_metrics_filters_incomplete_jobs(
-        #[fixtura(
-            name = "build".to_string(),
-            conclusion = Some("success".to_string()),
-            run_attempt = 1u32,
-            duration = 60.0_f64,
-            status = "completed".to_string(),
-            workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at = Some(Utc.timestamp_opt(1_609_459_260, 0).unwrap())
-        )]
-        completed: GitHubJob,
-        #[fixtura(name = "build".to_string(), status = "in_progress".to_string())]
-        incomplete: GitHubJob,
+        #[fixtura(status = "completed".to_string())] completed: GitHubJob,
+        #[fixtura(status = "in_progress".to_string())] incomplete: GitHubJob,
     ) {
         let metrics = calculate_job_metrics(vec![completed, incomplete], 1.0);
         assert_eq!(metrics.len(), 1);
@@ -274,35 +264,11 @@ mod tests {
 
     #[fixtura::test]
     fn test_calculate_job_metrics_multiple_executions_same_job(
-        #[fixtura(
-            name = "build".to_string(),
-            conclusion = Some("success".to_string()),
-            run_attempt = 1u32,
-            duration = 50.0_f64,
-            status = "completed".to_string(),
-            workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at = Some(Utc.timestamp_opt(1_609_459_250, 0).unwrap())
-        )]
+        #[fixtura(name = "build".to_string(), conclusion = Some("success".to_string()), duration = 50.0_f64, status = "completed".to_string())]
         job1: GitHubJob,
-        #[fixtura(
-            name = "build".to_string(),
-            conclusion = Some("success".to_string()),
-            run_attempt = 1u32,
-            duration = 100.0_f64,
-            status = "completed".to_string(),
-            workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at = Some(Utc.timestamp_opt(1_609_459_300, 0).unwrap())
-        )]
+        #[fixtura(name = "build".to_string(), conclusion = Some("success".to_string()), duration = 100.0_f64, status = "completed".to_string())]
         job2: GitHubJob,
-        #[fixtura(
-            name = "build".to_string(),
-            conclusion = Some("success".to_string()),
-            run_attempt = 1u32,
-            duration = 150.0_f64,
-            status = "completed".to_string(),
-            workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at = Some(Utc.timestamp_opt(1_609_459_350, 0).unwrap())
-        )]
+        #[fixtura(name = "build".to_string(), conclusion = Some("success".to_string()), duration = 150.0_f64, status = "completed".to_string())]
         job3: GitHubJob,
     ) {
         let metrics = calculate_job_metrics(vec![job1, job2, job3], 1.0);
@@ -314,35 +280,11 @@ mod tests {
 
     #[fixtura::test]
     fn test_calculate_job_metrics_retry_detection(
-        #[fixtura(
-            name = "build".to_string(),
-            conclusion = Some("success".to_string()),
-            run_attempt = 1u32,
-            duration = 60.0_f64,
-            status = "completed".to_string(),
-            workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at = Some(Utc.timestamp_opt(1_609_459_260, 0).unwrap())
-        )]
+        #[fixtura(name = "build".to_string(), status = "completed".to_string(), run_attempt = 1u32)]
         job1: GitHubJob,
-        #[fixtura(
-            name = "build".to_string(),
-            conclusion = Some("success".to_string()),
-            run_attempt = 2u32,
-            duration = 60.0_f64,
-            status = "completed".to_string(),
-            workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at = Some(Utc.timestamp_opt(1_609_459_260, 0).unwrap())
-        )]
+        #[fixtura(name = "build".to_string(), status = "completed".to_string(), run_attempt = 2u32)]
         job2: GitHubJob,
-        #[fixtura(
-            name = "build".to_string(),
-            conclusion = Some("success".to_string()),
-            run_attempt = 3u32,
-            duration = 60.0_f64,
-            status = "completed".to_string(),
-            workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at = Some(Utc.timestamp_opt(1_609_459_260, 0).unwrap())
-        )]
+        #[fixtura(name = "build".to_string(), status = "completed".to_string(), run_attempt = 3u32)]
         job3: GitHubJob,
     ) {
         let metrics = calculate_job_metrics(vec![job1, job2, job3], 1.0);
@@ -353,45 +295,13 @@ mod tests {
 
     #[fixtura::test]
     fn test_calculate_job_metrics_failure_rate(
-        #[fixtura(
-            name = "test".to_string(),
-            conclusion = Some("success".to_string()),
-            run_attempt = 1u32,
-            duration = 60.0_f64,
-            status = "completed".to_string(),
-            workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at = Some(Utc.timestamp_opt(1_609_459_260, 0).unwrap())
-        )]
+        #[fixtura(name = "test".to_string(), status = "completed".to_string(), conclusion = Some("success".to_string()))]
         job1: GitHubJob,
-        #[fixtura(
-            name = "test".to_string(),
-            conclusion = Some("failure".to_string()),
-            run_attempt = 1u32,
-            duration = 30.0_f64,
-            status = "completed".to_string(),
-            workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at = Some(Utc.timestamp_opt(1_609_459_230, 0).unwrap())
-        )]
+        #[fixtura(name = "test".to_string(), status = "completed".to_string(), conclusion = Some("failure".to_string()))]
         job2: GitHubJob,
-        #[fixtura(
-            name = "test".to_string(),
-            conclusion = Some("failure".to_string()),
-            run_attempt = 1u32,
-            duration = 40.0_f64,
-            status = "completed".to_string(),
-            workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at = Some(Utc.timestamp_opt(1_609_459_240, 0).unwrap())
-        )]
+        #[fixtura(name = "test".to_string(), status = "completed".to_string(), conclusion = Some("failure".to_string()))]
         job3: GitHubJob,
-        #[fixtura(
-            name = "test".to_string(),
-            conclusion = Some("success".to_string()),
-            run_attempt = 1u32,
-            duration = 70.0_f64,
-            status = "completed".to_string(),
-            workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
-            completed_at = Some(Utc.timestamp_opt(1_609_459_270, 0).unwrap())
-        )]
+        #[fixtura(name = "test".to_string(), status = "completed".to_string(), conclusion = Some("success".to_string()))]
         job4: GitHubJob,
     ) {
         let metrics = calculate_job_metrics(vec![job1, job2, job3, job4], 1.0);
@@ -406,30 +316,27 @@ mod tests {
     fn test_calculate_job_metrics_sorts_by_time_to_feedback(
         #[fixtura(
             name = "fast".to_string(),
+            status = "completed".to_string(),
             conclusion = Some("success".to_string()),
             run_attempt = 1u32,
-            duration = 30.0_f64,
-            status = "completed".to_string(),
             workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
             completed_at = Some(Utc.timestamp_opt(1_609_459_230, 0).unwrap())
         )]
         fast: GitHubJob,
         #[fixtura(
             name = "slow".to_string(),
+            status = "completed".to_string(),
             conclusion = Some("success".to_string()),
             run_attempt = 1u32,
-            duration = 300.0_f64,
-            status = "completed".to_string(),
             workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
             completed_at = Some(Utc.timestamp_opt(1_609_459_500, 0).unwrap())
         )]
         slow: GitHubJob,
         #[fixtura(
             name = "medium".to_string(),
+            status = "completed".to_string(),
             conclusion = Some("success".to_string()),
             run_attempt = 1u32,
-            duration = 120.0_f64,
-            status = "completed".to_string(),
             workflow_run_started_at = Utc.timestamp_opt(1_609_459_200, 0).unwrap(),
             completed_at = Some(Utc.timestamp_opt(1_609_459_320, 0).unwrap())
         )]
