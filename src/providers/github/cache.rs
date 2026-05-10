@@ -205,7 +205,7 @@ mod tests {
     }
 
     #[fixtura::test]
-    fn test_cache_clear_existing(#[fixtura(id = 1u64, name = "build".to_string())] job: GitHubJob) {
+    fn test_cache_clear_existing(job: GitHubJob) {
         let temp_dir = TempDir::new().unwrap();
         let base_dir = temp_dir.path().to_path_buf();
 
