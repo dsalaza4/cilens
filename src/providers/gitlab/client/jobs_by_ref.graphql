@@ -1,0 +1,28 @@
+query FetchJobsByRef($projectPath: ID!, $gitRef: String!, $refType: RefType, $firstPipelines: Int!, $afterPipeline: String) {
+  project(fullPath: $projectPath) {
+    pipelines(ref: $gitRef, refType: $refType, first: $firstPipelines, after: $afterPipeline) {
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+      nodes {
+        jobs(statuses: [SUCCESS, FAILED], first: 100) {
+          nodes {
+            id
+            name
+            status
+            duration
+            createdAt
+            finishedAt
+            retried
+            needs {
+              nodes {
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
